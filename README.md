@@ -1,3 +1,5 @@
+<img src="./fig2.png" width="450px"></img>
+
 ## SRT-H (wip)
 
 Implementation of the model architecture for [SRT-H](https://h-surgical-robot-transformer.github.io/) out of Johns Hopkins
