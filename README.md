@@ -17,3 +17,14 @@ Implementation of the model architecture for [SRT-H](https://h-surgical-robot-tr
     url     = {https://arxiv.org/abs/2505.10251}, 
 }
 ```
+
+```bibtex
+@article{Kim2024SurgicalRT,
+    title   = {Surgical Robot Transformer (SRT): Imitation Learning for Surgical Tasks},
+    author  = {Ji Woong Kim and Tony Zhao and Samuel Schmidgall and Anton Deguet and Marin Kobilarov and Chelsea Finn and Axel Krieger},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2407.12998},
+    url     = {https://api.semanticscholar.org/CorpusID:271270134}
+}
+```
