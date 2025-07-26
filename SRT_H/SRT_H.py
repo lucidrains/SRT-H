@@ -31,6 +31,7 @@ class ACT(Module):
         action_chunk_len,
         dim_action = 20,
         dim_head = 64,
+        dim_style_vector = None,
         heads = 8,
         vae_encoder_depth = 3,
         encoder_depth = 6,
@@ -44,6 +45,13 @@ class ACT(Module):
         super().__init__()
 
         self.dim = dim
+
+        # style vector dimension related
+
+        dim_style_vector = default(dim_style_vector, dim)
+        need_style_proj = dim_style_vector != dim
+
+        self.dim_style_vector = dim_style_vector
 
         # projections
 
@@ -64,9 +72,11 @@ class ACT(Module):
         self.attn_pool_query = Parameter(torch.randn(dim)) # there is evidence attention pooling is better than CLS / global average pooling
 
         self.to_style_vector_mean_log_variance = Sequential(
-            Linear(dim, dim * 2, bias = False),
+            Linear(dim, dim_style_vector * 2, bias = False),
             Rearrange('... (d mean_log_var) -> mean_log_var ... d', mean_log_var = 2)
         )
+
+        self.style_vector_to_token = nn.Linear(dim_style_vector, dim) if need_style_proj else nn.Identity()
 
         # detr like
 
@@ -99,10 +109,10 @@ class ACT(Module):
 
     def forward(
         self,
-        state_tokens,        # (b n d)
-        joint_state,         # (d)
-        actions = None,      # (b na da)
-        style_token = None,  # (d) | (b d)
+        state_tokens,         # (b n d)
+        joint_state,          # (d)
+        actions = None,       # (b na da)
+        style_vector = None,  # (d) | (b d)
         return_loss_breakdown = False
     ):
 
@@ -113,7 +123,7 @@ class ACT(Module):
         is_training = exists(actions)
         is_sampling = not is_training
 
-        assert not (is_training and exists(style_token)), 'style token cannot be set during training'
+        assert not (is_training and exists(style_vector)), 'style vector z cannot be set during training'
 
         # joint token
 
@@ -143,16 +153,18 @@ class ACT(Module):
 
             noise = torch.randn_like(style_mean)
 
-            style_token = style_mean + style_std * noise
+            style_vector = style_mean + style_std * noise
 
-        elif exists(style_token) and style_token.ndim == 1:
+        elif exists(style_vector) and style_vector.ndim == 1:
 
-            style_token = repeat(style_token, 'd -> b 1 d', b = batch)
+            style_vector = repeat(style_vector, 'd -> b 1 d', b = batch)
 
         else:
             # or just zeros during inference, as in the paper
 
-            style_token = torch.zeros((batch, 1, self.dim), device = device)
+            style_vector = torch.zeros((batch, 1, self.dim_style_vector), device = device)
+
+        style_token = self.style_vector_to_token(style_vector)
 
         # detr like encoder / decoder
 

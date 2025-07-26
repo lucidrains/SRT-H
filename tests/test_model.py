@@ -23,8 +23,8 @@ def test_act(
 
     # after a lot of data and training ...
 
-    style_token = torch.ones(512) if pass_custom_style else None
+    style_vector = torch.ones(512) if pass_custom_style else None
 
-    sampled_actions = act(states, joint_state, style_token = style_token) # (3, 16, 20)
+    sampled_actions = act(states, joint_state, style_vector = style_vector) # (3, 16, 20)
 
     assert sampled_actions.shape == (3, 16, 20)
