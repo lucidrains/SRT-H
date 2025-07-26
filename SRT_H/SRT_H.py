@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import namedtuple
 
 import torch
 from torch import nn, cat, stack, Tensor, is_tensor
@@ -18,6 +19,8 @@ def default(v, d):
     return v if exists(v) else d
 
 # ACT - Action Chunking Transformer - Zhou et al.
+
+Losses = namedtuple('Losses', ('action_recon', 'vae_kl_div'))
 
 class ACT(Module):
     def __init__(
@@ -173,7 +176,7 @@ class ACT(Module):
             - 1.
         )).sum(dim = -1).mean()
 
-        loss_breakdown = (action_recon_loss, vae_kl_loss)
+        loss_breakdown = Losses(action_recon_loss, vae_kl_loss)
 
         total_loss = (
             action_recon_loss +
