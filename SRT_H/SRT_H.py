@@ -57,6 +57,7 @@ class ACT(Module):
             depth = vae_encoder_depth,
             heads = heads,
             attn_dim_head = dim_head,
+            use_rmsnorm = True
         )
 
         self.attn_pooler = Attention(dim = dim, heads = heads, dim_head = dim_head)
@@ -74,6 +75,7 @@ class ACT(Module):
             depth = vae_encoder_depth,
             heads = heads,
             attn_dim_head = dim_head,
+            use_rmsnorm = True
         )
 
         self.action_queries = Parameter(torch.randn(action_chunk_len, dim) * 1e-2)
@@ -83,7 +85,9 @@ class ACT(Module):
             depth = vae_encoder_depth,
             heads = heads,
             attn_dim_head = dim_head,
-            cross_attend = True
+            cross_attend = True,
+            use_rmsnorm = True,
+            rotary_pos_emb = True
         )
 
         self.decoder_embed_to_actions = nn.Linear(dim, dim_action)
