@@ -166,14 +166,12 @@ class ACT(Module):
 
         action_recon_loss = self.action_loss_fn(pred_actions, actions)
 
-        # my first time with this loss, so please open an issue if incorrect
-
-        vae_kl_loss = (
-            style_log_variance.exp().square()
+        vae_kl_loss = (0.5 * (
+            style_log_variance.exp()
             + style_mean.square()
-            - (0.5 * style_log_variance)
+            - style_log_variance
             - 1.
-        ).sum(dim = -1).mean()
+        )).sum(dim = -1).mean()
 
         loss_breakdown = (action_recon_loss, vae_kl_loss)
 
