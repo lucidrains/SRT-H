@@ -39,6 +39,7 @@ class ACT(Module):
         encoder_depth = 6,
         decoder_depth = 6,
         vae_encoder_kwargs: dict = dict(),
+        vae_encoder_attn_pool_depth = 2,
         encoder_kwargs: dict = dict(),
         decoder: dict = dict(),
         image_model: Module | None = None,
@@ -73,7 +74,7 @@ class ACT(Module):
             use_rmsnorm = True
         )
 
-        self.attn_pooler = AttentionPool(dim = dim, attn_kwargs = dict(heads = heads, dim_head = dim_head))
+        self.attn_pooler = AttentionPool(dim = dim, depth = vae_encoder_attn_pool_depth, heads = heads, dim_head = dim_head)
 
         self.to_style_vector_mean_log_variance = Sequential(
             Linear(dim, dim_style_vector * 2, bias = False),
