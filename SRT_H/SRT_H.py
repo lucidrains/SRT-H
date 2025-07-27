@@ -10,6 +10,8 @@ from x_transformers import Encoder, Attention
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
+
 # helpers
 
 def exists(v):
@@ -39,6 +41,9 @@ class ACT(Module):
         vae_encoder_kwargs: dict = dict(),
         encoder_kwargs: dict = dict(),
         decoder: dict = dict(),
+        image_model: Module | None = None,
+        image_model_dim_emb = None,
+        max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
         action_loss_fn = nn.L1Loss()
     ):
@@ -102,6 +107,17 @@ class ACT(Module):
 
         self.decoder_embed_to_actions = nn.Linear(dim, dim_action)
 
+        # image model
+
+        image_model_dim_emb = default(image_model_dim_emb, dim)
+        need_image_to_state_proj = image_model_dim_emb != dim
+
+        self.image_model = image_model
+        self.to_state_tokens = nn.Linear(image_model_dim_emb, dim) if exists(image_model) and need_image_to_state_proj else nn.Identity()
+
+        if exists(image_model):
+            self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb)
+
         # loss related
 
         self.action_loss_fn = action_loss_fn
@@ -109,12 +125,27 @@ class ACT(Module):
 
     def forward(
         self,
-        state_tokens,         # (b n d)
-        joint_state,          # (d)
-        actions = None,       # (b na da)
-        style_vector = None,  # (d) | (b d)
+        *,
+        joint_state,                # (d)
+        video = None,               # (b c t h w)
+        state_tokens = None,        # (b n d)
+        actions = None,             # (b na da)
+        style_vector = None,        # (d) | (b d)
         return_loss_breakdown = False
     ):
+
+        # take care of video -> image tokens
+
+        assert exists(state_tokens) or exists(video), '`video` or its encoded `state_tokens` must be passed in'
+        assert not (exists(video) and not exists(self.image_model)), '`video` cannot be passed in if `image_model` is not set'
+
+        if exists(video):
+            assert video.ndim == 5
+
+            images_embeds = self.accept_video_wrapper(video)
+            state_tokens = self.to_state_tokens(images_embeds)
+
+            state_tokens = rearrange(state_tokens, 'b t n d -> b (t n) d')
 
         # variables
 
