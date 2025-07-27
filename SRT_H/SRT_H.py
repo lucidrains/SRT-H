@@ -5,7 +5,7 @@ import torch
 from torch import nn, cat, stack, Tensor, is_tensor
 from torch.nn import Module, ModuleList, Parameter, Linear, Sequential
 
-from x_transformers import Encoder, Attention
+from x_transformers import Encoder, Attention, AttentionPool
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
@@ -73,8 +73,7 @@ class ACT(Module):
             use_rmsnorm = True
         )
 
-        self.attn_pooler = Attention(dim = dim, heads = heads, dim_head = dim_head)
-        self.attn_pool_query = Parameter(torch.randn(dim)) # there is evidence attention pooling is better than CLS / global average pooling
+        self.attn_pooler = AttentionPool(dim = dim, attn_kwargs = dict(heads = heads, dim_head = dim_head))
 
         self.to_style_vector_mean_log_variance = Sequential(
             Linear(dim, dim_style_vector * 2, bias = False),
@@ -172,9 +171,7 @@ class ACT(Module):
 
             # cross attention pool
 
-            attn_pool_queries = repeat(self.attn_pool_query, 'd -> b 1 d', b = batch)
-
-            pooled_vae_embed = self.attn_pooler(attn_pool_queries, vae_encoder_embed)
+            pooled_vae_embed = self.attn_pooler(vae_encoder_embed)
 
             style_mean, style_log_variance = self.to_style_vector_mean_log_variance(pooled_vae_embed)
 
