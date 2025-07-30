@@ -46,6 +46,7 @@ class ACT(Module):
         decoder: dict = dict(),
         image_model: Module | None = None,
         image_model_dim_emb = None,
+        tactile_self_attn_depth = 2,
         tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
@@ -123,9 +124,18 @@ class ACT(Module):
 
         # tactile
 
+        self.tactile_self_attn = Encoder(
+            dim = dim,
+            depth = tactile_self_attn_depth,
+            heads = heads,
+            attn_dim_head = dim_head,
+            pre_norm_has_final_norm = False
+        )
+
         self.tactile_fuse = BiCrossAttnTransformer(
             dim = dim,
             context_dim = dim,
+            heads = heads,
             depth = tactile_image_fusion_cross_attn_depth
         )
 
@@ -162,6 +172,8 @@ class ACT(Module):
         # if tactile tokens are presented, fuse it with cross attention, as proposed by ViTacFormer - force feedback is becoming a thing
 
         if exists(tactile_tokens):
+            tactile_tokens = self.tactile_self_attn(tactile_token)
+
             state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens)
 
         # variables
