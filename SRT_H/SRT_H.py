@@ -36,6 +36,7 @@ class ACT(Module):
         dim_action = 20,
         dim_head = 64,
         dim_style_vector = None,
+        dim_lang_condition = None,
         heads = 8,
         vae_encoder_depth = 3,
         encoder_depth = 6,
@@ -142,6 +143,14 @@ class ACT(Module):
             depth = tactile_image_fusion_cross_attn_depth
         )
 
+        # take care of clinician feedback which is conditioning the state tokens with FiLM
+
+        self.to_film_scale_offset = None
+
+        if exists(dim_lang_condition):
+            self.to_film_scale_offset = nn.Linear(dim_lang_condition, dim * 2, bias = False)
+            nn.init.zeros_(self.film.weight)
+
         # loss related
 
         self.action_loss_fn = action_loss_fn
@@ -150,13 +159,14 @@ class ACT(Module):
     def forward(
         self,
         *,
-        joint_state,                # (d)
-        video = None,               # (b c t h w)
-        state_tokens = None,        # (b n d)
-        tactile_input = None,       # (b nt dt)
-        tactile_tokens = None,      # (b nt d)
-        actions = None,             # (b na da)
-        style_vector = None,        # (d) | (b d)
+        joint_state,                 # (d)
+        video = None,                # (b c t h w)
+        state_tokens = None,         # (b n d)
+        tactile_input = None,        # (b nt dt)
+        tactile_tokens = None,       # (b nt d)
+        actions = None,              # (b na da)
+        style_vector = None,         # (d) | (b d)
+        lang_condition = None,       # (b d)
         return_loss_breakdown = False
     ):
 
@@ -184,6 +194,17 @@ class ACT(Module):
             tactile_tokens = self.tactile_self_attn(tactile_tokens)
 
             state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens)
+
+        # maybe condition state tokens
+
+        if exists(lang_condition):
+            assert exists(self.to_film_scale_offset), f'`dim_lang_condition` must be set if doing further conditioning (clinician feedback in this paper)'
+
+            scale, offset = self.to_film_scale_offset(lang_condition).chunk(2, dim = -1)
+
+            scale, offset = tuple(rearrange(t, 'b d -> b 1 d'), (scale, offset))
+
+            state_tokens = state_tokens * (scale + 1.) + offset
 
         # variables
 
