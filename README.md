@@ -40,3 +40,15 @@ Implementation of the model architecture for [SRT-H](https://h-surgical-robot-tr
     url     = {https://arxiv.org/abs/2304.13705}, 
 }
 ```
+
+```bibtex
+@misc{heng2025vitacformerlearningcrossmodalrepresentation,
+    title   = {ViTacFormer: Learning Cross-Modal Representation for Visuo-Tactile Dexterous Manipulation}, 
+    author  = {Liang Heng and Haoran Geng and Kaifeng Zhang and Pieter Abbeel and Jitendra Malik},
+    year    = {2025},
+    eprint  = {2506.15953},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.RO},
+    url     = {https://arxiv.org/abs/2506.15953}, 
+}
+```

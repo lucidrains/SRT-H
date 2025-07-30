@@ -12,6 +12,8 @@ from einops.layers.torch import Rearrange
 
 from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
 
+from bidirectional_cross_attention import BidirectionalCrossAttentionTransformer as BiCrossAttnTransformer
+
 # helpers
 
 def exists(v):
@@ -44,6 +46,7 @@ class ACT(Module):
         decoder: dict = dict(),
         image_model: Module | None = None,
         image_model_dim_emb = None,
+        tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
         action_loss_fn = nn.L1Loss()
@@ -118,6 +121,14 @@ class ACT(Module):
         if exists(image_model):
             self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb)
 
+        # tactile
+
+        self.tactile_fuse = BiCrossAttnTransformer(
+            dim = dim,
+            context_dim = dim,
+            depth = tactile_image_fusion_cross_attn_depth
+        )
+
         # loss related
 
         self.action_loss_fn = action_loss_fn
@@ -129,6 +140,7 @@ class ACT(Module):
         joint_state,                # (d)
         video = None,               # (b c t h w)
         state_tokens = None,        # (b n d)
+        tactile_tokens = None,      # (b nt d)
         actions = None,             # (b na da)
         style_vector = None,        # (d) | (b d)
         return_loss_breakdown = False
@@ -146,6 +158,11 @@ class ACT(Module):
             state_tokens = self.to_state_tokens(images_embeds)
 
             state_tokens = rearrange(state_tokens, 'b t n d -> b (t n) d')
+
+        # if tactile tokens are presented, fuse it with cross attention, as proposed by ViTacFormer - force feedback is becoming a thing
+
+        if exists(tactile_tokens):
+            state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens)
 
         # variables
 
