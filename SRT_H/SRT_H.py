@@ -46,6 +46,7 @@ class ACT(Module):
         decoder: dict = dict(),
         image_model: Module | None = None,
         image_model_dim_emb = None,
+        dim_tactile_input = None,
         tactile_self_attn_depth = 2,
         tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
@@ -124,6 +125,8 @@ class ACT(Module):
 
         # tactile
 
+        self.to_tactile_tokens = nn.Linear(dim_tactile_input, dim) if exists(dim_tactile_input) else None
+
         self.tactile_self_attn = Encoder(
             dim = dim,
             depth = tactile_self_attn_depth,
@@ -150,6 +153,7 @@ class ACT(Module):
         joint_state,                # (d)
         video = None,               # (b c t h w)
         state_tokens = None,        # (b n d)
+        tactile_input = None,       # (b nt dt)
         tactile_tokens = None,      # (b nt d)
         actions = None,             # (b na da)
         style_vector = None,        # (d) | (b d)
@@ -171,8 +175,13 @@ class ACT(Module):
 
         # if tactile tokens are presented, fuse it with cross attention, as proposed by ViTacFormer - force feedback is becoming a thing
 
+        if exists(tactile_input):
+            assert not exists(tactile_tokens) and exists(self.to_tactile_tokens)
+
+            tactile_tokens = self.to_tactile_tokens(tactile_input)
+
         if exists(tactile_tokens):
-            tactile_tokens = self.tactile_self_attn(tactile_token)
+            tactile_tokens = self.tactile_self_attn(tactile_tokens)
 
             state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens)
 
