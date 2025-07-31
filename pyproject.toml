@@ -28,9 +28,10 @@ dependencies = [
     "bidirectional-cross-attention>=0.1.0",
     "einx>=0.3.0",
     "einops>=0.8.0",
+    "requests",
     "torch>=2.0",
+    "vit-pytorch>=1.11.4",
     "x-transformers>=2.5.6",
-    "vit-pytorch>=1.11.4"
 ]
 
 [project.urls]
