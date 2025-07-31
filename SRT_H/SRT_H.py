@@ -118,6 +118,19 @@ class ACT(Module):
         image_model_dim_emb = default(image_model_dim_emb, dim)
         need_image_to_state_proj = image_model_dim_emb != dim
 
+        # they used efficient net in the paper, but allow for others
+
+        if not exists(image_model):
+            efficientnet = torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_efficientnet_b0', pretrained = True)
+            utils = torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_convnets_processing_utils')
+
+            image_model_dim_emb = 1280
+            efficientnet.classifier = Rearrange('b d h w -> b (h w) d') # replace the classifier layer in efficient net
+
+            image_model = efficientnet
+
+        # set the image model and the projection to image tokens (state tokens)
+
         self.image_model = image_model
         self.to_state_tokens = nn.Linear(image_model_dim_emb, dim) if exists(image_model) and need_image_to_state_proj else nn.Identity()
 
@@ -178,7 +191,7 @@ class ACT(Module):
         if exists(video):
             assert video.ndim == 5
 
-            images_embeds = self.accept_video_wrapper(video)
+            images_embeds = self.accept_video_wrapper(video, eval_with_no_grad = True)
             state_tokens = self.to_state_tokens(images_embeds)
 
             state_tokens = rearrange(state_tokens, 'b t n d -> b (t n) d')
