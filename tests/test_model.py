@@ -37,7 +37,11 @@ def test_act(
     assert sampled_actions.shape == (3, 16, 20)
 
 @param('tactile', (False, True))
-def test_act_with_image_model(tactile):
+@param('efficient_net', (False, True))
+def test_act_with_image_model(
+    tactile,
+    efficient_net
+):
 
     from SRT_H.SRT_H import ACT
 
@@ -59,7 +63,7 @@ def test_act_with_image_model(tactile):
     v = Extractor(v, return_embeddings_only = True)
 
     act = ACT(
-        image_model = v,
+        image_model = v if not efficient_net else None,
         image_model_dim_emb = 1024,
         dim = 512,
         dim_joint_state = 17,
