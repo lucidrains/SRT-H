@@ -3,7 +3,7 @@ from collections import namedtuple
 
 import torch
 from torch import nn, cat, stack, Tensor, is_tensor
-from torch.nn import Module, ModuleList, Parameter, Linear, Sequential
+from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
 
 from x_transformers import Encoder, Attention, AttentionPool
 
@@ -21,6 +21,40 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+# pretrained model related
+# they successfully apply
+
+# 1. efficient net for low level vision
+# 2. swin t for high level vision
+# 3. distilbert for clinician language feedback
+
+class AcceptVideoSwin(Module):
+    def __init__(
+        self,
+        hub_url = 'SharanSMenon/swin-transformer-hub',
+        model_name = 'swin_tiny_patch4_window7_224',
+        dim_model = 768,
+        max_time_seq_len = 8 # say 8 frames
+    ):
+        super().__init__()
+        swin = torch.hub.load(hub_url, model_name, pretrained = True)
+        swin.avgpool = Identity()
+        swin.head = Rearrange('b (d n) -> b n d', d = dim_model)
+
+        self.model = AcceptVideoWrapper(
+            swin,
+            add_time_pos_emb = True,
+            time_seq_len = max_time_seq_len,
+            dim_emb = dim_model
+        )
+
+    def forward(
+        self,
+        video
+    ):
+        embeds = self.model(video)
+        return rearrange(embeds, 'b t n d -> b (t n) d')
 
 # ACT - Action Chunking Transformer - Zhou et al.
 
