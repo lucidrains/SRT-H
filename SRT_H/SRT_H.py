@@ -56,6 +56,26 @@ class AcceptVideoSwin(Module):
         embeds = self.model(video)
         return rearrange(embeds, 'b t n d -> b (t n) d')
 
+class EfficientNetImageModel(Module):
+    def __init__(
+        self,
+        hub_url = 'NVIDIA/DeepLearningExamples:torchhub',
+        model_name = 'nvidia_efficientnet_b0',
+        utils_path = 'nvidia_convnets_processing_utils',
+        dim = 1280
+    ):
+        super().__init__()
+        self.dim = dim
+
+        net = torch.hub.load(hub_url, model_name, pretrained = True)
+        utils = torch.hub.load(hub_url, utils_path)
+
+        net.classifier = Rearrange('b d h w -> b (h w) d') # replace the classifier layer in efficient net
+        self.net = net
+
+    def forward(self, images):
+        return self.net(images)
+
 # ACT - Action Chunking Transformer - Zhou et al.
 
 Losses = namedtuple('Losses', ('action_recon', 'vae_kl_div'))
@@ -155,13 +175,8 @@ class ACT(Module):
         # they used efficient net in the paper, but allow for others
 
         if not exists(image_model):
-            efficientnet = torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_efficientnet_b0', pretrained = True)
-            utils = torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_convnets_processing_utils')
-
-            image_model_dim_emb = 1280
-            efficientnet.classifier = Rearrange('b d h w -> b (h w) d') # replace the classifier layer in efficient net
-
-            image_model = efficientnet
+            image_model = EfficientNetImageModel()
+            image_model_dim_emb = image_model.dim
 
         # set the image model and the projection to image tokens (state tokens)
 
