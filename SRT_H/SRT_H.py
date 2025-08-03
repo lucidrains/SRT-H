@@ -233,13 +233,18 @@ class ACT(Module):
 
         # take care of clinician feedback which is conditioning the state tokens with FiLM
 
+        self.lang_condition_model = lang_condition_model
+
         self.to_film_scale_offset = None
 
         if exists(dim_lang_condition):
+
+            if exists(lang_condition_model):
+                dim_lang_condition = default(dim_lang_condition, getattr(lang_condition_model, 'dim', None))
+
             self.to_film_scale_offset = nn.Linear(dim_lang_condition, dim * 2, bias = False)
             nn.init.zeros_(self.film.weight)
 
-        self.lang_condition_model = lang_condition_model
 
         # loss related
 
