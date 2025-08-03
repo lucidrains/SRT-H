@@ -76,6 +76,31 @@ class EfficientNetImageModel(Module):
     def forward(self, images):
         return self.net(images)
 
+class DistilBert(Module):
+    def __init__(
+        self,
+        hf_path = "distilbert/distilbert-base-uncased",
+        dim = 768
+    ):
+        super().__init__()
+        from transformers import AutoTokenizer, AutoModelForMaskedLM
+
+        self.dim = dim
+        self.tokenizer = AutoTokenizer.from_pretrained(hf_path)
+        self.model = AutoModelForMaskedLM.from_pretrained(hf_path)
+
+    def forward(
+        self,
+        texts: list[str]
+    ):
+        inputs = self.tokenizer(texts, padding = True, truncation = True, return_tensors = 'pt')
+
+        with torch.no_grad():
+            self.model.eval()
+            out = self.model(**inputs, output_hidden_states = True)
+
+        return out.hidden_states[-1][:, 0]
+
 # ACT - Action Chunking Transformer - Zhou et al.
 
 Losses = namedtuple('Losses', ('action_recon', 'vae_kl_div'))
@@ -91,6 +116,7 @@ class ACT(Module):
         dim_head = 64,
         dim_style_vector = None,
         dim_lang_condition = None,
+        lang_condition_model: Module | None = None,
         heads = 8,
         vae_encoder_depth = 3,
         encoder_depth = 6,
@@ -213,6 +239,8 @@ class ACT(Module):
             self.to_film_scale_offset = nn.Linear(dim_lang_condition, dim * 2, bias = False)
             nn.init.zeros_(self.film.weight)
 
+        self.lang_condition_model = lang_condition_model
+
         # loss related
 
         self.action_loss_fn = action_loss_fn
@@ -229,6 +257,7 @@ class ACT(Module):
         actions = None,              # (b na da)
         style_vector = None,         # (d) | (b d)
         lang_condition = None,       # (b d)
+        lang_str_condition: list[str] | None = None,
         return_loss_breakdown = False
     ):
 
@@ -258,6 +287,11 @@ class ACT(Module):
             state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens)
 
         # maybe condition state tokens
+
+        assert not (exists(lang_condition) and exists(lang_str_condition))
+
+        if exists(lang_str_condition):
+            lang_condition = self.lang_condition_model(lang_str_condition)
 
         if exists(lang_condition):
             assert exists(self.to_film_scale_offset), f'`dim_lang_condition` must be set if doing further conditioning (clinician feedback in this paper)'
