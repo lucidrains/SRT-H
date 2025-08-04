@@ -38,12 +38,14 @@ def test_act(
 
 @param('tactile', (False, True))
 @param('efficient_net', (False, True))
+@param('film', (False, True))
 def test_act_with_image_model(
     tactile,
-    efficient_net
+    efficient_net,
+    film
 ):
 
-    from SRT_H.SRT_H import ACT
+    from SRT_H.SRT_H import ACT, DistilBert
 
     from vit_pytorch import ViT
     from vit_pytorch.extractor import Extractor
@@ -68,7 +70,8 @@ def test_act_with_image_model(
         dim = 512,
         dim_joint_state = 17,
         action_chunk_len = 16,
-        dim_tactile_input = 37
+        dim_tactile_input = 37,
+        lang_condition_model = DistilBert() if film else None
     )
 
     states = torch.randn(3, 512, 512)
@@ -80,10 +83,17 @@ def test_act_with_image_model(
 
     video = torch.randn(3, 3, 2, 224, 224)
 
+    feedback = [
+        "that looks ok, please proceed",
+        "you forgot to clip the cystic artery",
+        "stop, that is the common bile duct, not the cystic duct"
+    ]
+
     loss = act(
         video = video,
         joint_state = joint_state,
         tactile_input = tactile_input,
+        feedback = feedback if film else None,
         actions = actions
     )
 

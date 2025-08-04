@@ -237,14 +237,15 @@ class ACT(Module):
 
         self.to_film_scale_offset = None
 
-        if exists(dim_lang_condition):
+        if exists(dim_lang_condition) or exists(lang_condition_model):
 
             if exists(lang_condition_model):
                 dim_lang_condition = default(dim_lang_condition, getattr(lang_condition_model, 'dim', None))
 
-            self.to_film_scale_offset = nn.Linear(dim_lang_condition, dim * 2, bias = False)
-            nn.init.zeros_(self.film.weight)
+            assert exists(dim_lang_condition), f'`dim_lang_condition` not set'
 
+            self.to_film_scale_offset = nn.Linear(dim_lang_condition, dim * 2, bias = False)
+            nn.init.zeros_(self.to_film_scale_offset.weight)
 
         # loss related
 
@@ -262,7 +263,7 @@ class ACT(Module):
         actions = None,              # (b na da)
         style_vector = None,         # (d) | (b d)
         lang_condition = None,       # (b d)
-        lang_str_condition: list[str] | None = None,
+        feedback: list[str] | None = None,
         return_loss_breakdown = False
     ):
 
@@ -293,17 +294,19 @@ class ACT(Module):
 
         # maybe condition state tokens
 
-        assert not (exists(lang_condition) and exists(lang_str_condition))
+        assert not (exists(lang_condition) and exists(feedback))
 
-        if exists(lang_str_condition):
-            lang_condition = self.lang_condition_model(lang_str_condition)
+        if exists(feedback):
+            assert exists(self.lang_condition_model), f'`lang_condition_model` module must be passed in for direct language conditioning on efficientnet output'
+
+            lang_condition = self.lang_condition_model(feedback)
 
         if exists(lang_condition):
             assert exists(self.to_film_scale_offset), f'`dim_lang_condition` must be set if doing further conditioning (clinician feedback in this paper)'
 
             scale, offset = self.to_film_scale_offset(lang_condition).chunk(2, dim = -1)
 
-            scale, offset = tuple(rearrange(t, 'b d -> b 1 d'), (scale, offset))
+            scale, offset = tuple(rearrange(t, 'b d -> b 1 d') for t in (scale, offset))
 
             state_tokens = state_tokens * (scale + 1.) + offset
 
