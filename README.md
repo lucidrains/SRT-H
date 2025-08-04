@@ -2,7 +2,7 @@
 
 ## SRT-H (wip)
 
-Implementation of the model architecture for [SRT-H](https://h-surgical-robot-transformer.github.io/) out of Johns Hopkins
+Implementation of the model architecture for [SRT-H](https://h-surgical-robot-transformer.github.io/) out of Stanford / Johns Hopkins
 
 ## Citations
 
