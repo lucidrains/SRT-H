@@ -396,6 +396,45 @@ class ACT(Module):
 
         return total_loss, loss_breakdown
 
+# high level transformer
+# their high-level policy is a SWiN that takes in images, passes through attention layers to yield a language embedding
+
+class HighLevelPolicy(Module):
+    def __init__(
+        self,
+        dim_language_embed = 768, # dimension if distilbert
+        transformer: Module | dict = dict(
+            dim = 768,
+            dim_head = 64,
+            heads = 8,
+            depth = 4
+        ),
+        attn_pool_heads = 8,
+        attn_pool_dim_head = 64,
+    ):
+        super().__init__()
+
+        self.accept_video_wrapper = AcceptVideoSwin()
+
+        if isinstance(transformer, dict):
+            transformer = Encoder(**transformer)
+
+        self.transformer = transformer
+
+        self.attn_pooler = AttentionPool(dim_language_embed, dim_context = transformer.dim, heads = attn_pool_heads, dim_head = attn_pool_dim_head)
+
+    def forward(
+        self,
+        video
+    ):
+        image_embeds = self.accept_video_wrapper(video)
+
+        tokens = rearrange(image_embeds, 'b t n d -> b (t n) d')
+
+        attended = self.transformer(tokens)
+
+        return self.attn_pooler(attended)
+
 # classes
 
 class SRT(Module):
