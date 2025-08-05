@@ -14,6 +14,8 @@ from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
 
 from bidirectional_cross_attention import BidirectionalCrossAttentionTransformer as BiCrossAttnTransformer
 
+from autofaiss import build_index
+
 # helpers
 
 def exists(v):

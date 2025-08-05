@@ -25,6 +25,7 @@ classifiers=[
 ]
 
 dependencies = [
+    "autofaiss",
     "bidirectional-cross-attention>=0.1.0",
     "einx>=0.3.0",
     "einops>=0.8.0",
