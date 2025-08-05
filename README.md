@@ -52,3 +52,15 @@ Implementation of the model architecture for [SRT-H](https://h-surgical-robot-tr
     url     = {https://arxiv.org/abs/2506.15953}, 
 }
 ```
+
+```bibtex
+@misc{shi2024yellrobotimprovingonthefly,
+    title   = {Yell At Your Robot: Improving On-the-Fly from Language Corrections}, 
+    author  = {Lucy Xiaoyang Shi and Zheyuan Hu and Tony Z. Zhao and Archit Sharma and Karl Pertsch and Jianlan Luo and Sergey Levine and Chelsea Finn},
+    year    = {2024},
+    eprint  = {2403.12910},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.RO},
+    url     = {https://arxiv.org/abs/2403.12910}, 
+}
+```
