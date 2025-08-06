@@ -2,12 +2,13 @@ from __future__ import annotations
 from collections import namedtuple
 
 import torch
+import torch.nn.functional as F
 from torch import nn, cat, stack, Tensor, is_tensor
 from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
 
 from x_transformers import Encoder, Attention, AttentionPool
 
-from einops import rearrange, repeat
+from einops import rearrange, repeat, einsum
 from einops.layers.torch import Rearrange
 
 from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
@@ -23,6 +24,9 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+def l2norm(t):
+    return F.normalize(t, dim = -1)
 
 # pretrained model related
 # they successfully apply
@@ -427,7 +431,10 @@ class HighLevelPolicy(Module):
 
     def forward(
         self,
-        video
+        video,
+        command_embeds = None, # (b total_commands d)
+        labels = None,
+        temperature = 1.
     ):
         image_embeds = self.accept_video_wrapper(video)
 
@@ -435,7 +442,18 @@ class HighLevelPolicy(Module):
 
         attended = self.transformer(tokens)
 
-        return self.attn_pooler(attended)
+        language_embed_pred = self.attn_pooler(attended)
+
+        if not (exists(command_embeds) and exists(labels)):
+            return language_embed_pred
+
+        if exists(command_embeds):
+            logits = einsum(l2norm(language_embed_pred), l2norm(command_embeds), 'b d, b n d -> b n') / temperature
+
+        if not exists(labels):
+            return logits
+
+        return F.cross_entropy(logits, labels)
 
 # classes
 
