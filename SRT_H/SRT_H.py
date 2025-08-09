@@ -54,14 +54,16 @@ class CommandsIndexer(Module):
 
     def forward(
         self,
-        embed,
+        embed, # (b d)
         return_strings = False
     ):
-        query = embed.numpy()
+        device = self.command_embeds.device
+
+        query = embed.cpu().numpy()
         _, index = self.indexer.search(query, 1)
 
         index = torch.from_numpy(index)
-        index = rearrange(index, 'b 1 -> b')
+        index = rearrange(index, 'b 1 -> b').to(device)
 
         closest_embeds = self.command_embeds[index]
 
