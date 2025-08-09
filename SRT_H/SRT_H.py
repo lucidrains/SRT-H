@@ -15,6 +15,7 @@ from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
 
 from bidirectional_cross_attention import BidirectionalCrossAttentionTransformer as BiCrossAttnTransformer
 
+import numpy as np
 from autofaiss import build_index
 
 # helpers
@@ -27,6 +28,48 @@ def default(v, d):
 
 def l2norm(t):
     return F.normalize(t, dim = -1)
+
+# function uses autofaiss to build the commands embedding with ann index
+
+class CommandsIndexer(Module):
+    def __init__(
+        self,
+        commands: list[str],
+        model = None,
+    ):
+        super().__init__()
+
+        if not exists(model):
+            model = DistilBert()
+
+        self.commands = commands
+
+        command_embeds = model(commands)
+        indexer, index_info = build_index(command_embeds.cpu().numpy(), save_on_disk = False)
+
+        self.indexer = indexer
+        self.index_info = index_info
+
+        self.register_buffer('command_embeds', command_embeds)
+
+    def forward(
+        self,
+        embed,
+        return_strings = False
+    ):
+        query = embed.numpy()
+        _, index = self.indexer.search(query, 1)
+
+        index = torch.from_numpy(index)
+        index = rearrange(index, 'b 1 -> b')
+
+        closest_embeds = self.command_embeds[index]
+
+        if not return_strings:
+            return closest_embeds
+
+        commands = [self.commands[i] for i in index]
+        return closest_embeds, commands
 
 # pretrained model related
 # they successfully apply
