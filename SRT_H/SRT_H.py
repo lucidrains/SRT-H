@@ -29,6 +29,10 @@ def default(v, d):
 def l2norm(t):
     return F.normalize(t, dim = -1)
 
+def batcher(arr, batch):
+    for i in range(0, len(arr), batch):
+        yield arr[i:(i + batch)]
+
 # function uses autofaiss to build the commands embedding with ann index
 
 class CommandsIndexer(Module):
@@ -36,16 +40,22 @@ class CommandsIndexer(Module):
         self,
         commands: list[str],
         model = None,
+        embed_batch_size = 32,
+        embed_on_device = None
     ):
         super().__init__()
 
         if not exists(model):
             model = DistilBert()
 
+            if exists(embed_on_device):
+                model = model.to(embed_on_device)
+
         self.commands = commands
 
-        command_embeds = model(commands)
-        indexer, index_info = build_index(command_embeds.cpu().numpy(), save_on_disk = False)
+        command_embeds = cat([model(commands_batch).cpu() for commands_batch in batcher(commands, embed_batch_size)])
+
+        indexer, index_info = build_index(command_embeds.numpy(), save_on_disk = False)
 
         self.indexer = indexer
         self.index_info = index_info
