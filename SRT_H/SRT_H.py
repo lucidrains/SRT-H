@@ -472,6 +472,9 @@ class HighLevelPolicy(Module):
         ),
         attn_pool_heads = 8,
         attn_pool_dim_head = 64,
+        task_loss_weight = 0.4,
+        is_corrective_loss_weight = 0.3,
+        corrective_motion_loss_weight = 0.3
     ):
         super().__init__()
 
@@ -482,13 +485,36 @@ class HighLevelPolicy(Module):
 
         self.transformer = transformer
 
-        self.attn_pooler = AttentionPool(dim_language_embed, dim_context = transformer.dim, heads = attn_pool_heads, dim_head = attn_pool_dim_head)
+        self.attn_pooler = AttentionPool(
+            dim_language_embed,
+            num_pooled_tokens = 3,
+            dim_context = transformer.dim,
+            heads = attn_pool_heads,
+            dim_head = attn_pool_dim_head
+        )
+
+        self.to_corrective_pred = nn.Sequential(
+            nn.Linear(transformer.dim, 1),
+            Rearrange('... 1 -> ...'),
+            nn.Sigmoid()
+        )
+
+        # loss related
+
+        self.task_loss_weight = task_loss_weight
+        self.is_corrective_loss_weight = is_corrective_loss_weight
+        self.corrective_motion_loss_weight = corrective_motion_loss_weight
+
+        self.register_buffer('zero', tensor(0.), persistent = False)
 
     def forward(
         self,
         video,
-        command_embeds = None, # (b total_commands d)
-        labels = None,
+        task_embeds = None, # (b total_commands d)
+        task_labels = None,
+        is_corrective_labels = None, # (b)
+        correct_motion_embeds = None, # (b total_corr_motions d) - they only had 18
+        correct_motion_labels = None,
         temperature = 1.
     ):
         image_embeds = self.accept_video_wrapper(video)
@@ -497,18 +523,63 @@ class HighLevelPolicy(Module):
 
         attended = self.transformer(tokens)
 
-        language_embed_pred = self.attn_pooler(attended)
+        embeds = self.attn_pooler(attended).unbind(dim = 1)
 
-        if not (exists(command_embeds) and exists(labels)):
-            return language_embed_pred
+        if not (exists(task_embeds) and exists(labels)):
+            return embeds
 
-        if exists(command_embeds):
-            logits = einsum(l2norm(language_embed_pred), l2norm(command_embeds), 'b d, b n d -> b n') / temperature
+        pred_task_embed, is_corrective_embed, pred_correct_motion_embeds = embeds
 
-        if not exists(labels):
-            return logits
+        if exists(pred_task_embed):
+            pred_task_logits = einsum(l2norm(pred_task_embed), l2norm(task_embeds), 'b d, b n d -> b n') / temperature
 
-        return F.cross_entropy(logits, labels)
+        if not exists(task_labels):
+            return pred_task_logits
+
+        task_loss = F.cross_entropy(pred_task_logits, task_labels)
+
+        # interesting technique where they scale the task loss by the l1 loss of the labels - explanation in High-level policy section (near eq 1) - 2.5% improvement
+
+        target_task_embed = task_embeds[labels]
+        l1_dist = F.l1_loss(pred_task_embed, target_task_embed)
+
+        task_loss = task_loss * l1_dist
+
+        # is corrective
+
+        is_corrective_loss = self.zero
+
+        if exists(is_corrective_labels):
+            is_corrective_pred = self.to_corrective_pred(is_corrective_embed)
+
+            is_corrective_loss = F.binary_cross_entropy(
+                is_corrective_pred,
+                is_corrective_labels.float()
+            )
+
+        # corrective motion labels
+
+        correct_motion_loss = self.zero
+
+        if exists(correct_motion_labels):
+            correct_motion_logits = einsum(l2norm(pred_correct_motion_embeds), l2norm(correct_motion_embeds), 'b d, b n d -> b n') / temperature
+
+            correct_motion_loss = F.cross_entropy(
+                correct_motion_logits,
+                correct_motion_labels
+            )
+
+        # return total loss and loss breakdown
+
+        total_loss = (
+            task_loss * self.task_loss_weight +
+            is_corrective_loss * self.is_corrective_loss_weight + 
+            correct_motion_loss * self.corrective_motion_loss_weight
+        )
+
+        loss_breakdown = (task_loss, is_corrective_loss, correct_motion_loss)
+
+        return total_loss, loss_breakdown
 
 # classes
 
