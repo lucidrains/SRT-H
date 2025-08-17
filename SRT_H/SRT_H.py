@@ -8,6 +8,7 @@ from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
 
 from x_transformers import Encoder, Attention, AttentionPool
 
+import einx
 from einops import rearrange, repeat, einsum
 from einops.layers.torch import Rearrange
 
@@ -193,7 +194,8 @@ class ACT(Module):
         tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
-        action_loss_fn = nn.L1Loss()
+        action_loss_fn = nn.L1Loss(),
+        dropout_video_frame_prob = 0.07 # 7% chance of dropping out a frame during training, regularization mentioned in paper
     ):
         super().__init__()
 
@@ -273,6 +275,8 @@ class ACT(Module):
         if exists(image_model):
             self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb)
 
+        self.dropout_video_frame_prob = dropout_video_frame_prob
+
         # tactile
 
         self.to_tactile_tokens = nn.Linear(dim_tactile_input, dim) if exists(dim_tactile_input) else None
@@ -327,19 +331,30 @@ class ACT(Module):
         feedback: list[str] | None = None,
         return_loss_breakdown = False
     ):
-
         # take care of video -> image tokens
 
         assert exists(state_tokens) or exists(video), '`video` or its encoded `state_tokens` must be passed in'
         assert not (exists(video) and not exists(self.image_model)), '`video` cannot be passed in if `image_model` is not set'
 
+        state_mask = None
+
         if exists(video):
+            device = video.device
+
             assert video.ndim == 5
 
             images_embeds = self.accept_video_wrapper(video, eval_with_no_grad = True)
             state_tokens = self.to_state_tokens(images_embeds)
 
+            state_mask = torch.ones(state_tokens.shape[:3], dtype = torch.bool, device = device)
+
+            if self.training:
+                dropout_frame = torch.rand(state_tokens.shape[:2], device = device) < self.dropout_video_frame_prob
+                state_mask = einx.logical_and('b t n, b t', state_mask, ~dropout_frame)
+
             state_tokens = rearrange(state_tokens, 'b t n d -> b (t n) d')
+
+            state_mask = rearrange(state_mask, 'b t n -> b (t n)')
 
         # if tactile tokens are presented, fuse it with cross attention, as proposed by ViTacFormer - force feedback is becoming a thing
 
@@ -351,7 +366,7 @@ class ACT(Module):
         if exists(tactile_tokens):
             tactile_tokens = self.tactile_self_attn(tactile_tokens)
 
-            state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens)
+            state_tokens, tactile_tokens = self.tactile_fuse(state_tokens, tactile_tokens, mask = state_mask)
 
         # maybe condition state tokens
 
@@ -371,9 +386,9 @@ class ACT(Module):
 
             state_tokens = state_tokens * (scale + 1.) + offset
 
-        # variables
-
         batch, device = state_tokens.shape[0], state_tokens.device
+
+        # variables
 
         is_training = exists(actions)
         is_sampling = not is_training
@@ -421,13 +436,18 @@ class ACT(Module):
 
         # detr like encoder / decoder
 
+        mask = None
+
+        if exists(state_mask):
+            mask = F.pad(state_mask, (1, joint_tokens.shape[1]), value = True)
+
         encoder_input = cat((style_token, state_tokens, joint_tokens), dim = 1)
 
-        encoded = self.encoder(encoder_input)
+        encoded = self.encoder(encoder_input, mask = mask)
 
         decoder_input = repeat(self.action_queries, 'na d -> b na d', b = batch)
 
-        decoded = self.decoder(decoder_input, context = encoded)
+        decoded = self.decoder(decoder_input, context = encoded, context_mask = mask)
 
         pred_actions = self.decoder_embed_to_actions(decoded)
 
