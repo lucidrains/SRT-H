@@ -505,6 +505,8 @@ class HighLevelPolicy(Module):
 
         self.transformer = transformer
 
+        self.dim = transformer.dim
+
         self.attn_pooler = AttentionPool(
             dim_language_embed,
             num_pooled_tokens = 3,
@@ -537,15 +539,15 @@ class HighLevelPolicy(Module):
         correct_motion_labels = None,
         temperature = 1.
     ):
-        image_embeds = self.accept_video_wrapper(video)
+        batch, device = video.shape[0], video.device
 
-        tokens = rearrange(image_embeds, 'b t n d -> b (t n) d')
+        tokens = self.accept_video_wrapper(video)
 
         attended = self.transformer(tokens)
 
         embeds = self.attn_pooler(attended).unbind(dim = 1)
 
-        if not (exists(task_embeds) and exists(labels)):
+        if not (exists(task_embeds) and exists(task_labels)):
             return embeds
 
         pred_task_embed, is_corrective_embed, pred_correct_motion_embeds = embeds
@@ -560,7 +562,9 @@ class HighLevelPolicy(Module):
 
         # interesting technique where they scale the task loss by the l1 loss of the labels - explanation in High-level policy section (near eq 1) - 2.5% improvement
 
-        target_task_embed = task_embeds[labels]
+        batch_arange = torch.arange(batch, device = device)[..., None]
+        target_task_embed = task_embeds[batch_arange, task_labels]
+
         l1_dist = F.l1_loss(pred_task_embed, target_task_embed)
 
         task_loss = task_loss * l1_dist

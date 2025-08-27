@@ -103,8 +103,30 @@ def test_act_with_image_model(
 
     sampled_actions = act(state_tokens = states, joint_state = joint_state) # (3, 16, 20)
 
-
 def test_high_level():
     from SRT_H.SRT_H import HighLevelPolicy
 
     high_level_policy = HighLevelPolicy()
+
+    video = torch.randn(3, 3, 2, 224, 224)
+
+    dim = high_level_policy.dim
+
+    task_embeds = torch.randn(3, 17, dim)
+    task_labels = torch.randint(0, 17, (3,))
+
+    is_corrective_labels = torch.randint(0, 2, (3,))
+
+    correct_motion_embeds = torch.randn(3, 31, dim)
+    correct_motion_labels = torch.randint(0, 31, (3,))
+
+    loss, breakdown = high_level_policy(
+        video,
+        task_embeds = task_embeds,
+        task_labels = task_labels,
+        is_corrective_labels = is_corrective_labels,
+        correct_motion_embeds = correct_motion_embeds,
+        correct_motion_labels = correct_motion_labels
+    )
+
+    assert loss.numel() == 1
