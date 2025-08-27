@@ -3,7 +3,7 @@ from collections import namedtuple
 
 import torch
 import torch.nn.functional as F
-from torch import nn, cat, stack, Tensor, is_tensor
+from torch import nn, cat, stack, Tensor, tensor, is_tensor
 from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
 
 from x_transformers import Encoder, Attention, AttentionPool
@@ -486,7 +486,7 @@ class HighLevelPolicy(Module):
         dim_language_embed = 768, # dimension if distilbert
         transformer: Module | dict = dict(
             dim = 768,
-            dim_head = 64,
+            attn_dim_head = 64,
             heads = 8,
             depth = 4
         ),

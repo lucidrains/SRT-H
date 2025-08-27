@@ -1,6 +1,6 @@
 [project]
 name = "SRT-H"
-version = "0.0.10"
+version = "0.0.11"
 description = "SRT-H"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -30,6 +30,7 @@ dependencies = [
     "einx>=0.3.0",
     "einops>=0.8.0",
     "requests",
+    "timm",
     "torch>=2.0",
     "transformers>=4.54.1",
     "validators",

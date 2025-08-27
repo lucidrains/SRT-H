@@ -102,3 +102,9 @@ def test_act_with_image_model(
     # after a lot of data and training ...
 
     sampled_actions = act(state_tokens = states, joint_state = joint_state) # (3, 16, 20)
+
+
+def test_high_level():
+    from SRT_H.SRT_H import HighLevelPolicy
+
+    high_level_policy = HighLevelPolicy()
