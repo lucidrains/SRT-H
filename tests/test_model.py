@@ -39,10 +39,12 @@ def test_act(
 @param('tactile', (False, True))
 @param('efficient_net', (False, True))
 @param('film', (False, True))
+@param('flow_policy', (False, True))
 def test_act_with_image_model(
     tactile,
     efficient_net,
-    film
+    film,
+    flow_policy
 ):
 
     from SRT_H.SRT_H import ACT, DistilBert
@@ -71,6 +73,7 @@ def test_act_with_image_model(
         dim_joint_state = 17,
         action_chunk_len = 16,
         dim_tactile_input = 37,
+        flow_policy = flow_policy,
         lang_condition_model = DistilBert() if film else None
     )
 

@@ -168,9 +168,8 @@ class DistilBert(Module):
 # decoding strategies
 
 # 1. DETR queries to prediction with l1 loss
-# 2. Flow matching - todo
 
-class DETRQueryDecoder(Module):
+class DETRActionDecoder(Module):
     def __init__(
         self,
         decoder: Module,
@@ -211,6 +210,63 @@ class DETRQueryDecoder(Module):
         pred_actions = self.sample(encoded, mask)
         return self.action_loss_fn(pred_actions, actions)
 
+# 2. Flow matching for decoder (flow / diffusion policy)
+
+class WrappedDecoder(Module):
+    def __init__(
+        self,
+        model: Module,
+        dim,
+        dim_action,
+    ):
+        super().__init__()
+        self.proj_in = nn.Linear(dim_action, dim)
+        self.model = model
+        self.proj_out = nn.Linear(dim, dim_action)
+
+    def forward(
+        self,
+        x,
+        *args,
+        **kwargs
+    ):
+        x = self.proj_in(x)
+
+        x = self.model(x, *args, **kwargs)
+
+        x = self.proj_out(x)
+
+        return x
+
+class FlowActionDecoder(Module):
+    def __init__(
+        self,
+        decoder: Module,
+        dim,
+        dim_action,
+        action_chunk_len
+    ):
+        super().__init__()
+
+        decoder = WrappedDecoder(decoder, dim = dim, dim_action = dim_action)
+        self.flow_wrapper = NanoFlow(decoder)
+
+    def sample(
+        self,
+        encoded,
+        mask
+    ):
+        batch_size = encoded.shape[0]
+        return self.flow_wrapper.sample(batch_size = batch_size, context = encoded, context_mask = mask)
+
+    def forward(
+        self,
+        encoded,
+        actions,
+        *,
+        mask
+    ):
+        return self.flow_wrapper(actions, context = encoded, context_mask = mask)
 
 # ACT - Action Chunking Transformer - Zhou et al.
 
@@ -237,7 +293,7 @@ class ACT(Module):
         encoder_kwargs: dict = dict(),
         decoder: dict = dict(),
         decoder_wrapper_kwargs: dict = dict(),
-        decoder_use_flow_matching = False,
+        flow_policy = False,
         image_model: Module | None = None,
         image_model_dim_emb = None,
         dim_tactile_input = None,
@@ -306,15 +362,23 @@ class ACT(Module):
 
         # whether to use detr or flow matching for decoding to surgical bot actions
 
-        assert not decoder_use_flow_matching, 'flow matching not implemented yet, but will be improvised in'
+        if flow_policy:
+            self.decoder_wrapper = FlowActionDecoder(
+                decoder = self.decoder,
+                dim_action = dim_action,
+                dim = dim,
+                action_chunk_len = action_chunk_len,
+                **decoder_wrapper_kwargs
+            )
 
-        self.decoder_wrapper = DETRQueryDecoder(
-            decoder = self.decoder,
-            dim_action = dim_action,
-            dim = dim,
-            action_chunk_len = action_chunk_len,
-            **decoder_wrapper_kwargs
-        )
+        else:
+            self.decoder_wrapper = DETRActionDecoder(
+                decoder = self.decoder,
+                dim_action = dim_action,
+                dim = dim,
+                action_chunk_len = action_chunk_len,
+                **decoder_wrapper_kwargs
+            )
 
         # image model
 
