@@ -163,6 +163,53 @@ class DistilBert(Module):
 
         return out.hidden_states[-1][:, 0]
 
+# decoding strategies
+
+# 1. DETR queries to prediction with l1 loss
+# 2. Flow matching - todo
+
+class DETRQueryDecoder(Module):
+    def __init__(
+        self,
+        decoder: Module,
+        dim,
+        dim_action,
+        action_chunk_len,
+        action_loss_fn = nn.L1Loss()
+    ):
+        super().__init__()
+
+        self.action_queries = Parameter(torch.randn(action_chunk_len, dim) * 1e-2)
+        self.decoder = decoder
+        self.decoder_embed_to_actions = nn.Linear(dim, dim_action)
+
+        self.action_loss_fn = action_loss_fn
+
+    def sample(
+        self,
+        encoded,
+        mask
+    ):
+        batch = encoded.shape[0]
+
+        decoder_input = repeat(self.action_queries, 'na d -> b na d', b = batch)
+
+        decoded = self.decoder(decoder_input, context = encoded, context_mask = mask)
+
+        pred_actions = self.decoder_embed_to_actions(decoded)
+        return pred_actions
+
+    def forward(
+        self,
+        encoded,
+        actions,
+        *,
+        mask,
+    ):
+        pred_actions = self.sample(encoded, mask)
+        return self.action_loss_fn(pred_actions, actions)
+
+
 # ACT - Action Chunking Transformer - Zhou et al.
 
 Losses = namedtuple('Losses', ('action_recon', 'vae_kl_div'))
@@ -187,6 +234,8 @@ class ACT(Module):
         vae_encoder_attn_pool_depth = 2,
         encoder_kwargs: dict = dict(),
         decoder: dict = dict(),
+        decoder_wrapper_kwargs: dict = dict(),
+        decoder_use_flow_matching = False,
         image_model: Module | None = None,
         image_model_dim_emb = None,
         dim_tactile_input = None,
@@ -194,7 +243,6 @@ class ACT(Module):
         tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
-        action_loss_fn = nn.L1Loss(),
         dropout_video_frame_prob = 0.07 # 7% chance of dropping out a frame during training, regularization mentioned in paper
     ):
         super().__init__()
@@ -254,7 +302,17 @@ class ACT(Module):
             rotary_pos_emb = True
         )
 
-        self.decoder_embed_to_actions = nn.Linear(dim, dim_action)
+        # whether to use detr or flow matching for decoding to surgical bot actions
+
+        assert not decoder_use_flow_matching, 'flow matching not implemented yet, but will be improvised in'
+
+        self.decoder_wrapper = DETRQueryDecoder(
+            decoder = self.decoder,
+            dim_action = dim_action,
+            dim = dim,
+            action_chunk_len = action_chunk_len,
+            **decoder_wrapper_kwargs
+        )
 
         # image model
 
@@ -314,7 +372,6 @@ class ACT(Module):
 
         # loss related
 
-        self.action_loss_fn = action_loss_fn
         self.vae_kl_loss_weight = vae_kl_loss_weight
 
     def forward(
@@ -445,18 +502,14 @@ class ACT(Module):
 
         encoded = self.encoder(encoder_input, mask = mask)
 
-        decoder_input = repeat(self.action_queries, 'na d -> b na d', b = batch)
-
-        decoded = self.decoder(decoder_input, context = encoded, context_mask = mask)
-
-        pred_actions = self.decoder_embed_to_actions(decoded)
+        # if actions not passed in, assume inference and sample actions, whether from DETR or flow matching
 
         if not is_training:
-            return pred_actions
+            return self.decoder_wrapper.sample(encoded, mask)
 
         # take care of training loss
 
-        action_recon_loss = self.action_loss_fn(pred_actions, actions)
+        action_recon_loss = self.decoder_wrapper(encoded, actions, mask = mask)
 
         vae_kl_loss = (0.5 * (
             style_log_variance.exp()
