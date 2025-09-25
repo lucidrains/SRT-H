@@ -16,6 +16,8 @@ from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
 
 from bidirectional_cross_attention import BidirectionalCrossAttentionTransformer as BiCrossAttnTransformer
 
+from rectified_flow_pytorch.nano_flow import NanoFlow
+
 import numpy as np
 from autofaiss import build_index
 
