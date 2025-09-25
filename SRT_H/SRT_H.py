@@ -294,6 +294,7 @@ class ACT(Module):
         decoder: dict = dict(),
         decoder_wrapper_kwargs: dict = dict(),
         flow_policy = False,
+        action_norm_stats: Tensor | None = None,
         image_model: Module | None = None,
         image_model_dim_emb = None,
         dim_tactile_input = None,
@@ -440,6 +441,12 @@ class ACT(Module):
 
         self.vae_kl_loss_weight = vae_kl_loss_weight
 
+        # action (inverse) norm related
+
+        assert not exists(action_norm_stats) or action_norm_stats.shape == (2, dim_action), f'action norm stats must have shape (2, num_actions) - 2 for mean and std'
+
+        self.register_buffer('action_norm_stats', action_norm_stats)
+
     def forward(
         self,
         *,
@@ -568,10 +575,27 @@ class ACT(Module):
 
         encoded = self.encoder(encoder_input, mask = mask)
 
+        # action needs norm or inverse norm
+
+        action_needs_norm = exists(self.action_norm_stats)
+
+        if action_needs_norm:
+            action_mean, action_std = self.action_norm_stats
+
         # if actions not passed in, assume inference and sample actions, whether from DETR or flow matching
 
         if not is_training:
-            return self.decoder_wrapper.sample(encoded, mask)
+            sampled_actions = self.decoder_wrapper.sample(encoded, mask)
+
+            if action_needs_norm:
+                sampled_actions = (sampled_actions * action_std) + action_mean
+
+            return sampled_actions
+
+        # take care of action norm
+
+        if action_needs_norm:
+            actions = (actions - action_mean) / action_std.clamp(min = 1e-6)
 
         # take care of training loss
 

@@ -40,11 +40,13 @@ def test_act(
 @param('efficient_net', (False, True))
 @param('film', (False, True))
 @param('flow_policy', (False, True))
+@param('action_norm_stats', (False, True))
 def test_act_with_image_model(
     tactile,
     efficient_net,
     film,
-    flow_policy
+    flow_policy,
+    action_norm_stats
 ):
 
     from SRT_H.SRT_H import ACT, DistilBert
@@ -66,6 +68,8 @@ def test_act_with_image_model(
 
     v = Extractor(v, return_embeddings_only = True)
 
+    stats = torch.randn((2, 20)) if action_norm_stats else None
+
     act = ACT(
         image_model = v if not efficient_net else None,
         image_model_dim_emb = 1024,
@@ -74,6 +78,7 @@ def test_act_with_image_model(
         action_chunk_len = 16,
         dim_tactile_input = 37,
         flow_policy = flow_policy,
+        action_norm_stats = stats,
         lang_condition_model = DistilBert() if film else None
     )
 
