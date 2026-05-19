@@ -302,7 +302,8 @@ class ACT(Module):
         tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
-        dropout_video_frame_prob = 0.07 # 7% chance of dropping out a frame during training, regularization mentioned in paper
+        dropout_video_frame_prob = 0.07, # 7% chance of dropping out a frame during training, regularization mentioned in paper
+        video_moss_kwargs: dict = dict()
     ):
         super().__init__()
 
@@ -398,7 +399,7 @@ class ACT(Module):
         self.to_state_tokens = nn.Linear(image_model_dim_emb, dim) if exists(image_model) and need_image_to_state_proj else nn.Identity()
 
         if exists(image_model):
-            self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb)
+            self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb, moss_kwargs = video_moss_kwargs)
 
         self.dropout_video_frame_prob = dropout_video_frame_prob
 

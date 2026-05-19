@@ -35,13 +35,13 @@ dependencies = [
     "torch>=2.0",
     "transformers>=4.54.1",
     "validators",
-    "vit-pytorch>=1.11.4",
+    "vit-pytorch>=1.21.0",
     "x-transformers>=2.5.6",
 ]
 
 [project.urls]
 Homepage = "https://pypi.org/project/SRT-H/"
-Repository = "https://github.com/lucidrains/SRT-H"
+Repository = "https://codeberg.org/lucidrains/SRT-H"
 
 [project.optional-dependencies]
 examples = []
@@ -67,3 +67,11 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["SRT_H"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "SRT_H",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
