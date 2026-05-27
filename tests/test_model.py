@@ -39,14 +39,14 @@ def test_act(
 @param('tactile', (False, True))
 @param('efficient_net', (False, True))
 @param('film', (False, True))
-@param('flow_policy', (False, True))
 @param('action_norm_stats', (False, True))
+@param('moss', (False, True))
 def test_act_with_image_model(
     tactile,
     efficient_net,
     film,
-    flow_policy,
-    action_norm_stats
+    action_norm_stats,
+    moss
 ):
 
     from SRT_H.SRT_H import ACT, DistilBert
@@ -77,9 +77,9 @@ def test_act_with_image_model(
         dim_joint_state = 17,
         action_chunk_len = 16,
         dim_tactile_input = 37,
-        flow_policy = flow_policy,
         action_norm_stats = stats,
-        lang_condition_model = DistilBert() if film else None
+        lang_condition_model = DistilBert() if film else None,
+        video_moss_kwargs = dict() if moss else None
     )
 
     states = torch.randn(3, 512, 512)
