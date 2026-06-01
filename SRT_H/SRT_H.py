@@ -703,16 +703,19 @@ class HighLevelPolicy(Module):
         if not exists(task_labels):
             return pred_task_logits
 
-        task_loss = F.cross_entropy(pred_task_logits, task_labels)
 
-        # interesting technique where they scale the task loss by the l1 loss of the labels - explanation in High-level policy section (near eq 1) - 2.5% improvement
+        # # interesting technique where they scale the task loss by the l1 loss of the labels - explanation in High-level policy section (near eq 1) - 2.5% improvement
 
-        batch_arange = torch.arange(batch, device = device)[..., None]
+        task_ce_per_sample = F.cross_entropy(pred_task_logits, task_labels, reduction='none')
+
+        batch_arange = torch.arange(batch, device = device)
         target_task_embed = task_embeds[batch_arange, task_labels]
 
-        l1_dist = F.l1_loss(pred_task_embed, target_task_embed)
+        l1_dist_matrix = F.l1_loss(pred_task_embed, target_task_embed, reduction='none')
 
-        task_loss = task_loss * l1_dist
+        l1_dist_per_sample = l1_dist_matrix.mean(dim=-1)
+
+        task_loss = (task_ce_per_sample * l1_dist_per_sample).mean()
 
         # is corrective
 
