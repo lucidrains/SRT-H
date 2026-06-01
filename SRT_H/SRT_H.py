@@ -9,7 +9,7 @@ from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
 from x_transformers import Encoder, Attention, AttentionPool
 
 import einx
-from einops import rearrange, repeat, einsum
+from einops import rearrange, repeat, einsum, reduce
 from einops.layers.torch import Rearrange
 
 from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
@@ -703,17 +703,16 @@ class HighLevelPolicy(Module):
         if not exists(task_labels):
             return pred_task_logits
 
+        # interesting technique where they scale the task loss by the l1 loss of the labels - explanation in High-level policy section (near eq 1) - 2.5% improvement
 
-        # # interesting technique where they scale the task loss by the l1 loss of the labels - explanation in High-level policy section (near eq 1) - 2.5% improvement
-
-        task_ce_per_sample = F.cross_entropy(pred_task_logits, task_labels, reduction='none')
+        task_ce_per_sample = F.cross_entropy(pred_task_logits, task_labels, reduction = 'none')
 
         batch_arange = torch.arange(batch, device = device)
         target_task_embed = task_embeds[batch_arange, task_labels]
 
-        l1_dist_matrix = F.l1_loss(pred_task_embed, target_task_embed, reduction='none')
+        l1_dist_matrix = F.l1_loss(pred_task_embed, target_task_embed, reduction = 'none')
 
-        l1_dist_per_sample = l1_dist_matrix.mean(dim=-1)
+        l1_dist_per_sample = reduce(l1_dist_matrix, '... d -> ...', 'mean').detach()
 
         task_loss = (task_ce_per_sample * l1_dist_per_sample).mean()
 
@@ -745,7 +744,7 @@ class HighLevelPolicy(Module):
 
         total_loss = (
             task_loss * self.task_loss_weight +
-            is_corrective_loss * self.is_corrective_loss_weight + 
+            is_corrective_loss * self.is_corrective_loss_weight +
             correct_motion_loss * self.corrective_motion_loss_weight
         )
 
