@@ -3,7 +3,7 @@ from collections import namedtuple
 
 import torch
 import torch.nn.functional as F
-from torch import nn, cat, stack, Tensor, tensor, is_tensor
+from torch import nn, cat, stack, Tensor, tensor, is_tensor, pi
 from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
 
 from x_transformers import Encoder, Attention, AttentionPool
@@ -35,6 +35,48 @@ def l2norm(t):
 def batcher(arr, batch):
     for i in range(0, len(arr), batch):
         yield arr[i:(i + batch)]
+
+# frequency-aware flow matching helpers
+# https://arxiv.org/abs/2606.20135
+
+def freq_aware_fm_forward_transform(actions, freq_coeff_cutoff): # M in the paper
+    n, device = actions.shape[-2], actions.device
+    j = torch.arange(freq_coeff_cutoff + 1, device = device)
+    t = torch.arange(n, device = device)
+
+    freqs = torch.outer(j, 2 * t + 1) * pi / (2 * n)
+    basis = torch.cos(freqs)
+
+    return einsum(actions, basis, '... n d, m n -> ... m d') * (2 / n)
+
+def freq_aware_fm_inverse_transform(coeffs, n):
+    m_plus_1, device = coeffs.shape[-2], coeffs.device
+
+    j = torch.arange(m_plus_1, device = device)
+    t = torch.arange(n, device = device)
+
+    freqs = torch.outer(2 * t + 1, j) * pi / (2 * n)
+    basis = torch.cos(freqs)
+
+    coeffs = coeffs.clone()
+    coeffs[..., 0, :] *= 0.5
+
+    return einsum(coeffs, basis, '... m d, n m -> ... n d')
+
+def freq_aware_fm_loss_fn(action_chunk_len, weight_vel = 1.):
+
+    def loss_fn(pred, target):
+        m_plus_1, device, dtype = pred.shape[-2], pred.device, pred.dtype
+        j = torch.arange(m_plus_1, device = device, dtype = dtype)
+        omega = j * pi / action_chunk_len
+
+        # l2 velocity error in time domain simplifies to diagonal omega squared weighting on dct coefficients
+        loss_weights = 1. + weight_vel * (omega ** 2)
+
+        loss = F.mse_loss(pred, target, reduction = 'none')
+        return einx.multiply('... m d, m -> ... m d', loss, loss_weights).mean()
+
+    return loss_fn
 
 # function uses autofaiss to build the commands embedding with ann index
 
@@ -130,6 +172,7 @@ class EfficientNetImageModel(Module):
     ):
         super().__init__()
         self.dim = dim
+        self.patch_size = 32
 
         net = torch.hub.load(hub_url, model_name, pretrained = True)
         utils = torch.hub.load(hub_url, utils_path)
@@ -244,12 +287,13 @@ class FlowActionDecoder(Module):
         decoder: Module,
         dim,
         dim_action,
-        action_chunk_len
+        action_chunk_len,
+        loss_fn = F.mse_loss
     ):
         super().__init__()
 
         decoder = WrappedDecoder(decoder, dim = dim, dim_action = dim_action)
-        self.flow_wrapper = NanoFlow(decoder)
+        self.flow_wrapper = NanoFlow(decoder, data_shape = (action_chunk_len, dim_action), loss_fn = loss_fn)
 
     def sample(
         self,
@@ -303,11 +347,23 @@ class ACT(Module):
         max_num_image_frames = 32,
         vae_kl_loss_weight = 1.,
         dropout_video_frame_prob = 0.07, # 7% chance of dropping out a frame during training, regularization mentioned in paper
-        video_moss_kwargs: dict | None = None
+        video_moss_kwargs: dict | None = None,
+        use_freq_aware_fm = False,
+        freq_aware_fm_freq_coeff_cutoff = None, # M in the paper
+        freq_aware_fm_weight_vel = 1.
     ):
         super().__init__()
 
         self.dim = dim
+        self.action_chunk_len = action_chunk_len
+
+        self.use_freq_aware_fm = use_freq_aware_fm
+        self.freq_aware_fm_freq_coeff_cutoff = default(freq_aware_fm_freq_coeff_cutoff, max(1, action_chunk_len // 3))
+
+        decoder_action_chunk_len = (self.freq_aware_fm_freq_coeff_cutoff + 1) if use_freq_aware_fm else action_chunk_len
+
+        if use_freq_aware_fm:
+            freq_aware_fm_loss = freq_aware_fm_loss_fn(action_chunk_len, weight_vel = freq_aware_fm_weight_vel)
 
         # style vector dimension related
 
@@ -350,8 +406,6 @@ class ACT(Module):
             use_rmsnorm = True
         )
 
-        self.action_queries = Parameter(torch.randn(action_chunk_len, dim) * 1e-2)
-
         self.decoder = Encoder(
             dim = dim,
             depth = vae_encoder_depth,
@@ -369,7 +423,8 @@ class ACT(Module):
                 decoder = self.decoder,
                 dim_action = dim_action,
                 dim = dim,
-                action_chunk_len = action_chunk_len,
+                action_chunk_len = decoder_action_chunk_len,
+                loss_fn = freq_aware_fm_loss if use_freq_aware_fm else F.mse_loss,
                 **decoder_wrapper_kwargs
             )
 
@@ -378,7 +433,8 @@ class ACT(Module):
                 decoder = self.decoder,
                 dim_action = dim_action,
                 dim = dim,
-                action_chunk_len = action_chunk_len,
+                action_chunk_len = decoder_action_chunk_len,
+                action_loss_fn = freq_aware_fm_loss if use_freq_aware_fm else nn.L1Loss(),
                 **decoder_wrapper_kwargs
             )
 
@@ -399,7 +455,7 @@ class ACT(Module):
         self.to_state_tokens = nn.Linear(image_model_dim_emb, dim) if exists(image_model) and need_image_to_state_proj else nn.Identity()
 
         if exists(image_model):
-            moss_kwargs = {'dim': dim, **video_moss_kwargs} if exists(video_moss_kwargs) else None
+            moss_kwargs = {'dim': image_model_dim_emb, **video_moss_kwargs} if exists(video_moss_kwargs) else None
             self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb, moss = moss_kwargs)
 
         self.dropout_video_frame_prob = dropout_video_frame_prob
@@ -589,6 +645,9 @@ class ACT(Module):
         if not is_training:
             sampled_actions = self.decoder_wrapper.sample(encoded, mask)
 
+            if self.use_freq_aware_fm:
+                sampled_actions = freq_aware_fm_inverse_transform(sampled_actions, self.action_chunk_len)
+
             if action_needs_norm:
                 sampled_actions = (sampled_actions * action_std) + action_mean
 
@@ -598,6 +657,9 @@ class ACT(Module):
 
         if action_needs_norm:
             actions = (actions - action_mean) / action_std.clamp(min = 1e-6)
+
+        if self.use_freq_aware_fm:
+            actions = freq_aware_fm_forward_transform(actions, self.freq_aware_fm_freq_coeff_cutoff)
 
         # take care of training loss
 

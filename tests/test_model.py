@@ -138,3 +138,13 @@ def test_high_level():
     )
 
     assert loss.numel() == 1
+
+def test_freq_aware_fm_transform_identity():
+    from SRT_H.SRT_H import freq_aware_fm_forward_transform, freq_aware_fm_inverse_transform
+
+    actions = torch.randn(2, 16, 20)
+
+    coeffs = freq_aware_fm_forward_transform(actions, 16 - 1) # # max m is chunk_len - 1
+    recon_actions = freq_aware_fm_inverse_transform(coeffs, 16)
+
+    assert torch.allclose(actions, recon_actions, atol = 1e-5), 'FAFM forward and inverse transforms must be identity when freq_coeff_cutoff = n - 1'
