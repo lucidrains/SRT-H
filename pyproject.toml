@@ -83,8 +83,14 @@ packages = ["SRT_H"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "SRT_H",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml",
+    "/SRT_H",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+exclude = [
+    "/.venv*",
+    "/__pycache__",
+    "/.gitignore",
+    "dist",
 ]
