@@ -180,7 +180,12 @@ def test_freq_aware_fm_loss_reduction():
 
     loss_none = loss_fn(pred, target, reduction = 'none')
     assert loss_none.shape == pred.shape
-    assert torch.allclose(loss_none.mean(), loss, atol = 1e-6)
+
+    j = torch.arange(pred.shape[-2])
+    weights = 1. + (j * torch.pi / 16) ** 2
+    weight_sum = weights.sum() * pred.shape[0] * pred.shape[-1]
+
+    assert torch.allclose(loss_none.sum() / weight_sum, loss, atol = 1e-6)
 
     with pytest.raises(AssertionError):
         loss_fn(pred, target, reduction = 'sum')

@@ -18,6 +18,8 @@ from bidirectional_cross_attention import BidirectionalCrossAttentionTransformer
 
 from rectified_flow_pytorch.nano_flow import NanoFlow
 
+from torch_einops_utils import masked_mean
+
 import numpy as np
 from autofaiss import build_index
 
@@ -75,12 +77,16 @@ def freq_aware_fm_loss_fn(action_chunk_len, weight_vel = 1.):
         # l2 velocity error in time domain simplifies to diagonal omega squared weighting on dct coefficients
         loss_weights = 1. + weight_vel * (omega ** 2)
 
-        loss = einx.multiply('... m d, m -> ... m d', F.mse_loss(pred, target, reduction = 'none'), loss_weights)
+        mse = F.mse_loss(pred, target, reduction = 'none')
 
         if reduction == 'none':
-            return loss
+            return einx.multiply('... m d, m -> ... m d', mse, loss_weights)
 
-        return loss.mean()
+        # weights act as a non boolean mask for masked_mean, whose sum is the denominator
+
+        loss_weights = rearrange(loss_weights, 'm -> 1 m 1')
+
+        return masked_mean(mse, mask = loss_weights)
 
     return loss_fn
 
@@ -782,7 +788,7 @@ class HighLevelPolicy(Module):
 
         l1_dist_per_sample = reduce(l1_dist_matrix, '... d -> ...', 'mean').detach()
 
-        task_loss = (task_ce_per_sample * l1_dist_per_sample).mean()
+        task_loss = masked_mean(task_ce_per_sample, mask = l1_dist_per_sample)
 
         # is corrective
 
