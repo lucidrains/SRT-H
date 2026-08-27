@@ -65,7 +65,9 @@ def freq_aware_fm_inverse_transform(coeffs, n):
 
 def freq_aware_fm_loss_fn(action_chunk_len, weight_vel = 1.):
 
-    def loss_fn(pred, target):
+    def loss_fn(pred, target, reduction = 'mean'):
+        assert reduction in ('mean', 'none'), f'reduction must be one of `mean` or `none`'
+
         m_plus_1, device, dtype = pred.shape[-2], pred.device, pred.dtype
         j = torch.arange(m_plus_1, device = device, dtype = dtype)
         omega = j * pi / action_chunk_len
@@ -73,8 +75,12 @@ def freq_aware_fm_loss_fn(action_chunk_len, weight_vel = 1.):
         # l2 velocity error in time domain simplifies to diagonal omega squared weighting on dct coefficients
         loss_weights = 1. + weight_vel * (omega ** 2)
 
-        loss = F.mse_loss(pred, target, reduction = 'none')
-        return einx.multiply('... m d, m -> ... m d', loss, loss_weights).mean()
+        loss = einx.multiply('... m d, m -> ... m d', F.mse_loss(pred, target, reduction = 'none'), loss_weights)
+
+        if reduction == 'none':
+            return loss
+
+        return loss.mean()
 
     return loss_fn
 

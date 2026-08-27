@@ -1,6 +1,6 @@
 [project]
 name = "SRT-H"
-version = "0.0.20"
+version = "0.0.22"
 description = "SRT-H"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -48,6 +48,13 @@ examples = []
 test = [
     "pytest"
 ]
+lapgym = [
+    "env-ssl-wrapper>=0.1.11",
+    "fire",
+    "gymnasium",
+    "imageio",
+    "imageio-ffmpeg",
+]
 
 [tool.pytest.ini_options]
 pythonpath = [
@@ -57,6 +64,11 @@ pythonpath = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]
 
 [tool.rye]
 managed = true

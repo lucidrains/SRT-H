@@ -139,6 +139,52 @@ def test_high_level():
 
     assert loss.numel() == 1
 
+def test_act_freq_aware_fm_flow_policy():
+    from SRT_H.SRT_H import ACT
+
+    act = ACT(
+        dim = 512,
+        dim_joint_state = 17,
+        action_chunk_len = 16,
+        flow_policy = True,
+        use_freq_aware_fm = True
+    )
+
+    states = torch.randn(3, 512, 512)
+    joint_state = torch.randn(3, 17)
+
+    actions = torch.randn(3, 16, 20)
+
+    loss = act(
+        state_tokens = states,
+        joint_state = joint_state,
+        actions = actions
+    )
+
+    loss.backward()
+
+    sampled_actions = act(state_tokens = states, joint_state = joint_state) # (3, 16, 20)
+
+    assert sampled_actions.shape == (3, 16, 20)
+
+def test_freq_aware_fm_loss_reduction():
+    from SRT_H.SRT_H import freq_aware_fm_loss_fn
+
+    loss_fn = freq_aware_fm_loss_fn(action_chunk_len = 16)
+
+    pred = torch.randn(3, 6, 20)
+    target = torch.randn(3, 6, 20)
+
+    loss = loss_fn(pred, target)
+    assert loss.ndim == 0
+
+    loss_none = loss_fn(pred, target, reduction = 'none')
+    assert loss_none.shape == pred.shape
+    assert torch.allclose(loss_none.mean(), loss, atol = 1e-6)
+
+    with pytest.raises(AssertionError):
+        loss_fn(pred, target, reduction = 'sum')
+
 def test_freq_aware_fm_transform_identity():
     from SRT_H.SRT_H import freq_aware_fm_forward_transform, freq_aware_fm_inverse_transform
 
