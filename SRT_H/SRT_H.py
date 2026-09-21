@@ -3,13 +3,13 @@ from collections import namedtuple
 
 import torch
 import torch.nn.functional as F
-from torch import nn, cat, stack, Tensor, tensor, is_tensor, pi
-from torch.nn import Module, ModuleList, Parameter, Identity, Linear, Sequential
+from torch import nn, cat, stack, Tensor, tensor, pi
+from torch.nn import Module, Parameter, Identity, Linear, Sequential
 
-from x_transformers import Encoder, Attention, AttentionPool
+from x_transformers import Encoder, AttentionPool
 
 import einx
-from einops import rearrange, repeat, einsum, reduce
+from einops import rearrange, repeat, einsum, reduce, pack
 from einops.layers.torch import Rearrange
 
 from vit_pytorch.accept_video_wrapper import AcceptVideoWrapper
@@ -261,9 +261,15 @@ class DETRActionDecoder(Module):
         actions,
         *,
         mask,
+        loss_reduction = 'mean'
     ):
         pred_actions = self.sample(encoded, mask)
-        return self.action_loss_fn(pred_actions, actions)
+
+        if isinstance(self.action_loss_fn, Module):
+            self.action_loss_fn.reduction = loss_reduction
+            return self.action_loss_fn(pred_actions, actions)
+
+        return self.action_loss_fn(pred_actions, actions, reduction = loss_reduction)
 
 # 2. Flow matching for decoder (flow / diffusion policy)
 
@@ -320,13 +326,14 @@ class FlowActionDecoder(Module):
         encoded,
         actions,
         *,
-        mask
+        mask,
+        loss_reduction = 'mean'
     ):
-        return self.flow_wrapper(actions, context = encoded, context_mask = mask)
+        return self.flow_wrapper(actions, context = encoded, context_mask = mask, loss_reduction = loss_reduction)
 
 # ACT - Action Chunking Transformer - Zhou et al.
 
-Losses = namedtuple('Losses', ('action_recon', 'vae_kl_div'))
+Losses = namedtuple('Losses', ('action_recon',))
 
 class ACT(Module):
     def __init__(
@@ -341,15 +348,13 @@ class ACT(Module):
         dim_lang_condition = None,
         lang_condition_model: Module | None = None,
         heads = 8,
-        vae_encoder_depth = 3,
         encoder_depth = 6,
         decoder_depth = 6,
-        vae_encoder_kwargs: dict = dict(),
-        vae_encoder_attn_pool_depth = 2,
         encoder_kwargs: dict = dict(),
         decoder: dict = dict(),
         decoder_wrapper_kwargs: dict = dict(),
-        flow_policy = False,
+        flow_policy = True,
+        xm_candidates = 2,
         action_norm_stats: Tensor | None = None,
         image_model: Module | None = None,
         image_model_dim_emb = None,
@@ -357,12 +362,12 @@ class ACT(Module):
         tactile_self_attn_depth = 2,
         tactile_image_fusion_cross_attn_depth = 2, # ViTacFormer
         max_num_image_frames = 32,
-        vae_kl_loss_weight = 1.,
         dropout_video_frame_prob = 0.07, # 7% chance of dropping out a frame during training, regularization mentioned in paper
         video_moss_kwargs: dict | None = None,
         use_freq_aware_fm = False,
         freq_aware_fm_freq_coeff_cutoff = None, # M in the paper
-        freq_aware_fm_weight_vel = 1.
+        freq_aware_fm_weight_vel = 1.,
+        **kwargs
     ):
         super().__init__()
 
@@ -383,49 +388,36 @@ class ACT(Module):
         need_style_proj = dim_style_vector != dim
 
         self.dim_style_vector = dim_style_vector
+        self.style_vector_to_token = nn.Linear(dim_style_vector, dim) if need_style_proj else nn.Identity()
+
+        # explorative modeling candidates
+
+        self.xm_candidates = xm_candidates
 
         # projections
 
         self.joint_to_token = nn.Linear(dim_joint_state, dim)
-        self.action_to_vae_tokens = nn.Linear(dim_action, dim)
-
-        # for the cvae and style vector
-
-        self.vae_encoder = Encoder(
-            dim = dim,
-            depth = vae_encoder_depth,
-            heads = heads,
-            attn_dim_head = dim_head,
-            use_rmsnorm = True
-        )
-
-        self.attn_pooler = AttentionPool(dim = dim, depth = vae_encoder_attn_pool_depth, heads = heads, dim_head = dim_head)
-
-        self.to_style_vector_mean_log_variance = Sequential(
-            Linear(dim, dim_style_vector * 2, bias = False),
-            Rearrange('... (d mean_log_var) -> mean_log_var ... d', mean_log_var = 2)
-        )
-
-        self.style_vector_to_token = nn.Linear(dim_style_vector, dim) if need_style_proj else nn.Identity()
 
         # detr like
 
         self.encoder = Encoder(
             dim = dim,
-            depth = vae_encoder_depth,
+            depth = encoder_depth,
             heads = heads,
             attn_dim_head = dim_head,
-            use_rmsnorm = True
+            use_rmsnorm = True,
+            **encoder_kwargs
         )
 
         self.decoder = Encoder(
             dim = dim,
-            depth = vae_encoder_depth,
+            depth = decoder_depth,
             heads = heads,
             attn_dim_head = dim_head,
             cross_attend = True,
             use_rmsnorm = True,
-            rotary_pos_emb = True
+            rotary_pos_emb = True,
+            **decoder
         )
 
         # whether to use detr or flow matching for decoding to surgical bot actions
@@ -467,7 +459,7 @@ class ACT(Module):
         self.to_state_tokens = nn.Linear(image_model_dim_emb, dim) if exists(image_model) and need_image_to_state_proj else nn.Identity()
 
         if exists(image_model):
-            moss_kwargs = {'dim': image_model_dim_emb, **video_moss_kwargs} if exists(video_moss_kwargs) else None
+            moss_kwargs = dict(dim = image_model_dim_emb, **video_moss_kwargs) if exists(video_moss_kwargs) else None
             self.accept_video_wrapper = AcceptVideoWrapper(image_model, add_time_pos_emb = True, time_seq_len = max_num_image_frames, dim_emb = image_model_dim_emb, moss = moss_kwargs)
 
         self.dropout_video_frame_prob = dropout_video_frame_prob
@@ -507,10 +499,6 @@ class ACT(Module):
             self.to_film_scale_offset = nn.Linear(dim_lang_condition, dim * 2, bias = False)
             nn.init.zeros_(self.to_film_scale_offset.weight)
 
-        # loss related
-
-        self.vae_kl_loss_weight = vae_kl_loss_weight
-
         # action (inverse) norm related
 
         assert not exists(action_norm_stats) or action_norm_stats.shape == (2, dim_action), f'action norm stats must have shape (2, num_actions) - 2 for mean and std'
@@ -529,7 +517,9 @@ class ACT(Module):
         style_vector = None,         # (d) | (b d)
         lang_condition = None,       # (b d)
         feedback: list[str] | None = None,
-        return_loss_breakdown = False
+        loss_reduction = 'mean',
+        return_loss_breakdown = False,
+        **kwargs
     ):
         # take care of video -> image tokens
 
@@ -588,49 +578,31 @@ class ACT(Module):
 
         batch, device = state_tokens.shape[0], state_tokens.device
 
-        # variables
-
         is_training = exists(actions)
-        is_sampling = not is_training
-
-        assert not (is_training and exists(style_vector)), 'style vector z cannot be set during training'
 
         # joint token
 
         joint_tokens = self.joint_to_token(joint_state)
         joint_tokens = rearrange(joint_tokens, 'b d -> b 1 d')
 
-        # take care of the needed style token during training
+        # handle style vector and explorative modeling (XM)
+        # in Gladstone's explorative modeling: during training without an explicit style vector,
+        # draw K candidate style vectors from prior N(0, I) and select the winner (min loss)
 
-        if is_training:
-            action_vae_tokens = self.action_to_vae_tokens(actions)
+        num_candidates = self.xm_candidates if (is_training and not exists(style_vector)) else 1
+        has_multiple_candidates = num_candidates > 1
 
-            vae_input = cat((action_vae_tokens, joint_tokens), dim = 1)
+        if not exists(style_vector):
+            randn_or_zeros = torch.randn if is_training else torch.zeros
+            style_vector = randn_or_zeros((batch * num_candidates, self.dim_style_vector), device = device)
+        elif style_vector.ndim == 1:
+            style_vector = repeat(style_vector, 'd -> b d', b = batch)
 
-            vae_encoder_embed = self.vae_encoder(vae_input)
+        style_vector, _ = pack([style_vector], 'b * d')
 
-            # cross attention pool
-
-            pooled_vae_embed = self.attn_pooler(vae_encoder_embed)
-
-            style_mean, style_log_variance = self.to_style_vector_mean_log_variance(pooled_vae_embed)
-
-            # reparam
-
-            style_std = (0.5 * style_log_variance).exp()
-
-            noise = torch.randn_like(style_mean)
-
-            style_vector = style_mean + style_std * noise
-
-        elif exists(style_vector) and style_vector.ndim == 1:
-
-            style_vector = repeat(style_vector, 'd -> b 1 d', b = batch)
-
-        else:
-            # or just zeros during inference, as in the paper
-
-            style_vector = torch.zeros((batch, 1, self.dim_style_vector), device = device)
+        if has_multiple_candidates:
+            repeat_k = lambda t: repeat(t, 'b ... -> (b k) ...', k = num_candidates) if exists(t) else None
+            state_tokens, joint_tokens, actions, state_mask = map(repeat_k, (state_tokens, joint_tokens, actions, state_mask))
 
         style_token = self.style_vector_to_token(style_vector)
 
@@ -674,27 +646,21 @@ class ACT(Module):
             actions = freq_aware_fm_forward_transform(actions, self.freq_aware_fm_freq_coeff_cutoff)
 
         # take care of training loss
+        # if XM candidates > 1, evaluate candidate losses and pick winner (min loss)
 
-        action_recon_loss = self.decoder_wrapper(encoded, actions, mask = mask)
+        loss = self.decoder_wrapper(encoded, actions, mask = mask, loss_reduction = 'none' if has_multiple_candidates else loss_reduction)
 
-        vae_kl_loss = (0.5 * (
-            style_log_variance.exp()
-            + style_mean.square()
-            - style_log_variance
-            - 1.
-        )).sum(dim = -1).mean()
+        if has_multiple_candidates:
+            candidate_losses = reduce(loss, '(b k) ... -> b k', 'mean', b = batch, k = num_candidates)
+            loss = candidate_losses.amin(dim = -1)
 
-        loss_breakdown = Losses(action_recon_loss, vae_kl_loss)
-
-        total_loss = (
-            action_recon_loss +
-            vae_kl_loss * self.vae_kl_loss_weight
-        )
+            if loss_reduction == 'mean':
+                loss = loss.mean()
 
         if not return_loss_breakdown:
-            return total_loss
+            return loss
 
-        return total_loss, loss_breakdown
+        return loss, Losses(loss)
 
 # high level transformer
 # their high-level policy is a SWiN that takes in images, passes through attention layers to yield a language embedding

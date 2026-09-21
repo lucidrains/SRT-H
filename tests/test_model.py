@@ -4,37 +4,43 @@ import pytest
 param = pytest.mark.parametrize
 
 @param('pass_custom_style', (False, True))
+@param('xm_candidates', (1, 2))
 def test_act(
-    pass_custom_style
+    pass_custom_style,
+    xm_candidates
 ):
     from SRT_H.SRT_H import ACT
 
     act = ACT(
         dim = 512,
         dim_joint_state = 17,
-        action_chunk_len = 16
+        action_chunk_len = 16,
+        flow_policy = True,
+        xm_candidates = xm_candidates
     )
 
     states = torch.randn(3, 512, 512)
     joint_state = torch.randn(3, 17)
 
     actions = torch.randn(3, 16, 20)
+    style_vector = torch.randn(3, 512) if pass_custom_style else None
 
     loss = act(
         state_tokens = states,
         joint_state = joint_state,
-        actions = actions
+        actions = actions,
+        style_vector = style_vector
     )
 
     loss.backward()
 
     # after a lot of data and training ...
 
-    style_vector = torch.ones(512) if pass_custom_style else None
-
     sampled_actions = act(state_tokens = states, joint_state = joint_state, style_vector = style_vector) # (3, 16, 20)
 
     assert sampled_actions.shape == (3, 16, 20)
+
+
 
 @param('tactile', (False, True))
 @param('efficient_net', (False, True))
