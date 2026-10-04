@@ -19,6 +19,7 @@ from bidirectional_cross_attention import BidirectionalCrossAttentionTransformer
 from rectified_flow_pytorch.nano_flow import NanoFlow
 
 from torch_einops_utils import masked_mean
+from torch_einops_utils.shape import shape, size
 
 import numpy as np
 from autofaiss import build_index
@@ -42,7 +43,7 @@ def batcher(arr, batch):
 # https://arxiv.org/abs/2606.20135
 
 def freq_aware_fm_forward_transform(actions, freq_coeff_cutoff): # M in the paper
-    n, device = actions.shape[-2], actions.device
+    n, device = size(actions, '... [n] d'), actions.device
     j = torch.arange(freq_coeff_cutoff + 1, device = device)
     t = torch.arange(n, device = device)
 
@@ -52,7 +53,7 @@ def freq_aware_fm_forward_transform(actions, freq_coeff_cutoff): # M in the pape
     return einsum(actions, basis, '... n d, m n -> ... m d') * (2 / n)
 
 def freq_aware_fm_inverse_transform(coeffs, n):
-    m_plus_1, device = coeffs.shape[-2], coeffs.device
+    m_plus_1, device = size(coeffs, '... [m] d'), coeffs.device
 
     j = torch.arange(m_plus_1, device = device)
     t = torch.arange(n, device = device)
@@ -70,7 +71,7 @@ def freq_aware_fm_loss_fn(action_chunk_len, weight_vel = 1.):
     def loss_fn(pred, target, reduction = 'mean'):
         assert reduction in ('mean', 'none'), f'reduction must be one of `mean` or `none`'
 
-        m_plus_1, device, dtype = pred.shape[-2], pred.device, pred.dtype
+        m_plus_1, device, dtype = size(pred, '... [m] d'), pred.device, pred.dtype
         j = torch.arange(m_plus_1, device = device, dtype = dtype)
         omega = j * pi / action_chunk_len
 
@@ -246,7 +247,7 @@ class DETRActionDecoder(Module):
         encoded,
         mask
     ):
-        batch = encoded.shape[0]
+        batch = size(encoded, '[b] ...')
 
         decoder_input = repeat(self.action_queries, 'na d -> b na d', b = batch)
 
@@ -299,6 +300,36 @@ class WrappedDecoder(Module):
 
         return x
 
+class SteeringNetwork(Module):
+    def __init__(
+        self,
+        dim,
+        dim_action,
+        action_chunk_len,
+        dim_hidden = 256,
+        depth = 2
+    ):
+        super().__init__()
+        self.action_chunk_len = action_chunk_len
+
+        layers = []
+        dims = (dim, *((dim_hidden,) * depth))
+
+        for dim_in, dim_out in zip(dims[:-1], dims[1:]):
+            layers.extend((Linear(dim_in, dim_out), nn.Mish()))
+
+        layers.append(Linear(dims[-1], action_chunk_len * dim_action))
+
+        self.net = Sequential(*layers)
+
+    def forward(
+        self,
+        encoded,        # (b n d)
+        mask = None
+    ):
+        pooled = masked_mean(encoded, mask = mask, dim = 1)
+        return rearrange(self.net(pooled), 'b (n d) -> b n d', n = self.action_chunk_len)
+
 class FlowActionDecoder(Module):
     def __init__(
         self,
@@ -306,20 +337,57 @@ class FlowActionDecoder(Module):
         dim,
         dim_action,
         action_chunk_len,
-        loss_fn = F.mse_loss
+        loss_fn = F.mse_loss,
+        steering_net: Module | None = None
     ):
         super().__init__()
 
         decoder = WrappedDecoder(decoder, dim = dim, dim_action = dim_action)
         self.flow_wrapper = NanoFlow(decoder, data_shape = (action_chunk_len, dim_action), loss_fn = loss_fn)
 
+        self.steering_net = steering_net
+
     def sample(
         self,
         encoded,
-        mask
+        mask,
+        noise = None,
+        steps = 16
     ):
-        batch_size = encoded.shape[0]
-        return self.flow_wrapper.sample(batch_size = batch_size, context = encoded, context_mask = mask)
+        if not exists(noise) and exists(self.steering_net):
+            noise = self.steering_net(encoded, mask = mask)
+
+        batch_size = size(encoded, '[b] ...')
+        return self.flow_wrapper.sample(batch_size = batch_size, noise = noise, steps = steps, context = encoded, context_mask = mask)
+
+    def action_to_noise_latents(
+        self,
+        encoded,
+        actions,
+        mask,
+        steps = 16,
+        reverse_fixed_point_steps = 5
+    ):
+        # reverse flow ode - action at t=1 back to noise at t=0
+
+        assert not self.flow_wrapper.predict_clean, 'reverse flow ode requires velocity prediction (`predict_clean = False`)'
+
+        batch_size = size(encoded, '[b] ...')
+        return self.flow_wrapper.sample(batch_size = batch_size, image = actions, reverse = True, steps = steps, reverse_fixed_point_steps = reverse_fixed_point_steps, context = encoded, context_mask = mask)
+
+    def steering_loss(
+        self,
+        encoded,
+        actions,
+        mask,
+        steps = 16
+    ):
+        assert exists(self.steering_net), '`steering_net` must be passed in to compute `steering_loss`'
+
+        targets = self.action_to_noise_latents(encoded, actions, mask, steps = steps)
+
+        pred = self.steering_net(encoded, mask = mask)
+        return F.mse_loss(pred, targets)
 
     def forward(
         self,
@@ -536,10 +604,11 @@ class ACT(Module):
             images_embeds = self.accept_video_wrapper(video, eval_with_no_grad = True)
             state_tokens = self.to_state_tokens(images_embeds)
 
-            state_mask = torch.ones(state_tokens.shape[:3], dtype = torch.bool, device = device)
+            b, t, n = shape(state_tokens, '[b] [t] [n] d')
+            state_mask = torch.ones((b, t, n), dtype = torch.bool, device = device)
 
             if self.training:
-                dropout_frame = torch.rand(state_tokens.shape[:2], device = device) < self.dropout_video_frame_prob
+                dropout_frame = torch.rand((b, t), device = device) < self.dropout_video_frame_prob
                 state_mask = einx.logical_and('b t n, b t', state_mask, ~dropout_frame)
 
             state_tokens = rearrange(state_tokens, 'b t n d -> b (t n) d')
@@ -576,7 +645,7 @@ class ACT(Module):
 
             state_tokens = state_tokens * (scale + 1.) + offset
 
-        batch, device = state_tokens.shape[0], state_tokens.device
+        batch, device = size(state_tokens, '[b] ...'), state_tokens.device
 
         is_training = exists(actions)
 
@@ -611,7 +680,7 @@ class ACT(Module):
         mask = None
 
         if exists(state_mask):
-            mask = F.pad(state_mask, (1, joint_tokens.shape[1]), value = True)
+            mask = F.pad(state_mask, (1, size(joint_tokens, 'b [n] d')), value = True)
 
         encoder_input = cat((style_token, state_tokens, joint_tokens), dim = 1)
 
@@ -724,7 +793,7 @@ class HighLevelPolicy(Module):
         correct_motion_labels = None,
         temperature = 1.
     ):
-        batch, device = video.shape[0], video.device
+        batch, device = size(video, '[b] ...'), video.device
 
         tokens = self.accept_video_wrapper(video)
 

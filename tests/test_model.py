@@ -205,3 +205,98 @@ def test_freq_aware_fm_transform_identity():
     recon_actions = freq_aware_fm_inverse_transform(coeffs, 16)
 
     assert torch.allclose(actions, recon_actions, atol = 1e-5), 'FAFM forward and inverse transforms must be identity when freq_coeff_cutoff = n - 1'
+
+def test_flow_action_to_noise_latents_roundtrip():
+    from SRT_H.SRT_H import FlowActionDecoder
+
+    class ConstantVelocity(torch.nn.Module):
+        def forward(self, x, **kwargs):
+            return torch.ones_like(x)
+
+    wrapper = FlowActionDecoder(
+        decoder = ConstantVelocity(),
+        dim = 32,
+        dim_action = 20,
+        action_chunk_len = 16
+    )
+
+    encoded = torch.randn(2, 5, 32)
+    mask = torch.ones(2, 5, dtype = torch.bool)
+
+    actions = torch.randn(2, 16, 20)
+
+    # action at t=1 -> noise at t=0 -> action at t=1, exact for a constant velocity field
+
+    latents = wrapper.action_to_noise_latents(encoded, actions, mask, steps = 4)
+    assert latents.shape == actions.shape
+
+    reconstructed = wrapper.sample(encoded, mask, noise = latents, steps = 4)
+    assert torch.allclose(reconstructed, actions, atol = 1e-5)
+
+def test_flow_steering_network():
+    from SRT_H.SRT_H import FlowActionDecoder, SteeringNetwork
+    from x_transformers import Encoder
+
+    decoder = Encoder(dim = 32, depth = 1, heads = 4, cross_attend = True)
+
+    steering_net = SteeringNetwork(
+        dim = 32,
+        dim_action = 20,
+        action_chunk_len = 16,
+        dim_hidden = 64
+    )
+
+    wrapper = FlowActionDecoder(
+        decoder = decoder,
+        dim = 32,
+        dim_action = 20,
+        action_chunk_len = 16,
+        steering_net = steering_net
+    )
+
+    encoded = torch.randn(2, 5, 32)
+    mask = torch.ones(2, 5, dtype = torch.bool)
+
+    noise = steering_net(encoded, mask = mask)
+    assert noise.shape == (2, 16, 20)
+
+    steered = wrapper.sample(encoded, mask, steps = 2)
+    explicit = wrapper.sample(encoded, mask, noise = noise, steps = 2)
+
+    assert torch.allclose(steered, explicit, atol = 1e-6)
+
+    actions = torch.randn(2, 16, 20)
+
+    loss = wrapper.steering_loss(encoded, actions, mask, steps = 2)
+    loss.backward()
+
+    assert all(param.grad is not None for param in steering_net.parameters())
+
+def test_act_with_flow_steering():
+    from SRT_H.SRT_H import ACT, SteeringNetwork
+
+    act = ACT(
+        dim = 64,
+        dim_joint_state = 17,
+        action_chunk_len = 16,
+        flow_policy = True,
+        decoder_wrapper_kwargs = dict(
+            steering_net = SteeringNetwork(
+                dim = 64,
+                dim_action = 20,
+                action_chunk_len = 16,
+                dim_hidden = 64
+            )
+        )
+    ).eval()
+
+    states = torch.randn(3, 8, 64)
+    joint_state = torch.randn(3, 17)
+
+    sampled_actions = act(state_tokens = states, joint_state = joint_state)
+    assert sampled_actions.shape == (3, 16, 20)
+
+    # steering noise is deterministic - unlike the random noise of the base policy
+
+    sampled_actions_again = act(state_tokens = states, joint_state = joint_state)
+    assert torch.allclose(sampled_actions, sampled_actions_again, atol = 1e-6)

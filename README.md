@@ -80,3 +80,13 @@ Implementation of the model architecture for [SRT-H](https://h-surgical-robot-tr
     url     = {https://arxiv.org/abs/2607.27372},
 }
 ```
+
+```bibtex
+@inproceedings{murray2026flowdagger,
+    title   = {{FlowDAgger}: Human-in-the-Loop Adaptation of Generative Robot Policies in Latent Space},
+    author  = {Michael Murray and Daphne Chen and Simran Bagaria and Dean Fortier and Tess Hellebrekers and Galen Mullins and Harshavardhan Gajarla and Oier Mees and Maya Cakmak and Andrey Kolobov},
+    booktitle = {Proceedings of the 10th Conference on Robot Learning},
+    year    = {2026},
+    url     = {https://arxiv.org/abs/2607.08877},
+}
+```
